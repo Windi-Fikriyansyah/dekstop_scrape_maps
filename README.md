@@ -1,64 +1,39 @@
-# Maps Lead Scraper
+# Maps Lead Scraper Desktop 🚀
 
-Scrape business leads from Google Maps and extract contact details from their websites.
+Akses data bisnis Google Maps dengan satu klik. Aplikasi ini dirancang untuk mudah digunakan oleh user awam tanpa perlu instalasi Python.
 
-![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
-![Playwright](https://img.shields.io/badge/playwright-v1.58+-orange.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+## Fitur Utama
+- **Scraping Otomatis**: Cukup masukkan keyword dan lokasi.
+- **Ekstrak Kontak**: Mengambil Email dan Telepon langsung dari website bisnis.
+- **Database Lokal**: Menyimpan data hasil scraping secara otomatis.
+- **Export Data**: Simpan hasil ke format CSV atau Excel.
+- **Modern UI**: Antarmuka gelap yang minimalis dan responsif.
 
-## Features
+## Cara Menggunakan (Untuk User)
+1. Jalankan `MapsLeadScraper.exe`.
+2. Masukkan Keyword (contoh: *Cafe*) dan Lokasi (contoh: *Bandung*).
+3. Klik **Mulai Scraping**.
+4. Data akan muncul di tabel. Gunakan tab **Data Tersimpan** untuk melihat riwayat.
 
-- Auto-scrolls Google Maps to collect maximum listings per query
-- Detects direct-hit searches (single result pages) automatically
-- Bypasses cookie consent screens
-- Enriches every listing by visiting its website to extract emails and phones
-- Real-time dashboard with live log panel, filtering, and CSV export
-- Collapsible sidebar, resizable log panel, full mobile support
+## Cara Build Menjadi Aplikasi (.EXE)
+Jika Anda adalah pengembang yang ingin membungkus kode ini menjadi aplikasi untuk orang lain:
 
-## Stack
+1. Pastikan Python terinstal.
+2. Klik dua kali file `build_app.bat`.
+3. Tunggu hingga selesai. File aplikasi akan ada di folder `dist/MapsLeadScraper.exe`.
 
-- **FastAPI + uvicorn** — async web server, scraper runs on the same event loop
-- **Playwright** — headless Chromium browser automation
-- **Tailwind CSS + Alpine.js** — frontend, no build step
+### Membuat Installer (Setup.exe)
+Untuk membuat folder instalasi profesional:
+1. Instal **Inno Setup** (Gratis).
+2. Klik kanan pada `installer_script.iss` di folder ini.
+3. Pilih **Compile**.
+4. Hasil installer ada di `dist/installer/MapsLeadScraper_Setup.exe`.
 
-## Installation
+## Dependensi Inti
+- `CustomTkinter` (UI)
+- `Playwright` (Scraping engine)
+- `SQLAlchemy` (Database)
+- `Pandas` (Export data)
 
-```bash
-git clone https://github.com/dacrab/maps-lead-scraper.git
-cd maps-lead-scraper
-pip install -r requirements.txt
-playwright install chromium
-```
-
-## Usage
-
-```bash
-python3 main.py
-```
-
-Open `http://localhost:8000`, go to **Settings**, configure your search terms and locations, then hit **Start**.
-
-## Configuration
-
-| Setting | Description |
-| :--- | :--- |
-| **Search Terms** | Comma-separated business types, e.g. `Plumbers, Dentists` |
-| **Locations** | Comma-separated cities or areas, e.g. `New York, London` |
-| **Max Results** | Per-query limit. `0` = unlimited |
-| **Headless** | Run browser in background (recommended) or visible for debugging |
-| **Concurrency** | Number of parallel tabs for website enrichment |
-
-## Project Structure
-
-```
-main.py           # Scraper + FastAPI server
-templates/
-└── index.html    # Dashboard + Settings SPA
-static/           # Logo, favicon
-contacts.csv      # Auto-saved leads
-config.json       # Auto-saved settings
-```
-
-## License
-
+## Lisensi
 MIT

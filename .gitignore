@@ -1,24 +1,36 @@
-# Data & Config
-contacts.csv
-contacts.csv.tmp
-config.json
-scraper.log
-scraper.pid
-
-# Python & Environment
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-.env
-.venv
-env/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Database (Jangan push database lokal ke GitHub)
+sql_app.db
+sql_app.db-journal
+
+# Virtual Environments
 venv/
+env/
+.env/
+.venv/
 
-# Playwright & Browser
-.cache/
-ms-playwright/
-
-# IDE & System
+# IDE / Editor
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Log & Ekspor File
+*.log
+*.csv
+*.xlsx
+contacts.csv
+scraper.log
+
+# Playwright & OS files
 .DS_Store
+Thumbs.db

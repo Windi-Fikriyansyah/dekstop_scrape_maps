@@ -1,4 +1,5 @@
-fastapi
-uvicorn[standard]
-jinja2
+customtkinter
 playwright
+sqlalchemy
+pandas
+openpyxl
