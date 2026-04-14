@@ -3,3 +3,4 @@ playwright
 sqlalchemy
 pandas
 openpyxl
+python-dotenv

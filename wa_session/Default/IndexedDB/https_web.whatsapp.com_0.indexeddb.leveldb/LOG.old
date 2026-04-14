@@ -1,0 +1,26 @@
+2026/04/14-16:22:36.464 545c Reusing MANIFEST D:\maps-lead-scraper\wa_session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/MANIFEST-000001
+2026/04/14-16:22:36.824 545c Recovering log #739
+2026/04/14-16:22:37.074 545c Reusing old log D:\maps-lead-scraper\wa_session\Default\IndexedDB\https_web.whatsapp.com_0.indexeddb.leveldb/000739.log 
+2026/04/14-16:22:37.074 545c Delete type=2 #734
+2026/04/14-16:22:37.074 545c Delete type=2 #735
+2026/04/14-16:22:37.074 545c Delete type=2 #736
+2026/04/14-16:22:37.074 545c Delete type=2 #737
+2026/04/14-16:22:37.074 545c Delete type=2 #738
+2026/04/14-16:22:37.074 545c Delete type=2 #740
+2026/04/14-16:23:07.217 517c Level-0 table #748: started
+2026/04/14-16:23:07.266 517c Level-0 table #748: 1305659 bytes OK
+2026/04/14-16:23:07.277 517c Delete type=0 #739
+2026/04/14-16:23:07.366 517c Compacting 1@1 + 5@2 files
+2026/04/14-16:23:07.772 517c Generated table #749@1: 65303 keys, 2282068 bytes
+2026/04/14-16:23:08.046 517c Generated table #750@1: 29345 keys, 2193437 bytes
+2026/04/14-16:23:08.273 517c Generated table #751@1: 18451 keys, 2154791 bytes
+2026/04/14-16:23:08.688 517c Generated table #752@1: 91738 keys, 2240683 bytes
+2026/04/14-16:23:09.031 517c Generated table #753@1: 46026 keys, 1362923 bytes
+2026/04/14-16:23:09.032 517c Compacted 1@1 + 5@2 files => 10233902 bytes
+2026/04/14-16:23:09.041 517c compacted to: files[ 0 0 5 0 0 0 0 ]
+2026/04/14-16:23:09.041 517c Delete type=2 #741
+2026/04/14-16:23:09.041 517c Delete type=2 #742
+2026/04/14-16:23:09.041 517c Delete type=2 #743
+2026/04/14-16:23:09.041 517c Delete type=2 #744
+2026/04/14-16:23:09.041 517c Delete type=2 #745
+2026/04/14-16:23:09.041 517c Delete type=2 #748
