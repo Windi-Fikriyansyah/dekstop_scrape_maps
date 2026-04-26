@@ -6,7 +6,6 @@ __pycache__/
 # PyInstaller
 build/
 dist/
-*.spec
 
 # Database (Jangan push database lokal ke GitHub)
 sql_app.db
