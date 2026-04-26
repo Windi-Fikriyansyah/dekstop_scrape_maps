@@ -66,7 +66,6 @@ extra_datas = a.datas
 if sys.platform == 'darwin':
     # Add pw-browsers manually to the collection step
     if os.path.exists('pw-browsers'):
-        from PyInstaller.building.api import Tree
         extra_datas += Tree('pw-browsers', prefix='pw-browsers')
 
 coll = COLLECT(
