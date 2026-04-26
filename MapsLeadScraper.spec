@@ -1,14 +1,25 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('pw-browsers', 'pw-browsers')]
+import os
+import sys
+
+datas = []
 binaries = []
 hiddenimports = []
+
+# Collect requirements
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 tmp_ret = collect_all('playwright')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
+# On macOS, we handle pw-browsers differently to avoid binary processing errors
+if sys.platform == 'darwin':
+    # We will add it to COLLECT instead of Analysis datas to avoid PyInstaller's inspection
+    browser_data = []
+else:
+    datas += [('pw-browsers', 'pw-browsers')]
 
 a = Analysis(
     ['desktop_app.py'],
@@ -23,6 +34,11 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# On macOS, filter out any mistakenly identified binaries from pw-browsers
+if sys.platform == 'darwin':
+    a.binaries = [x for x in a.binaries if 'pw-browsers' not in x[0] and 'pw-browsers' not in x[1]]
+
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -44,10 +60,19 @@ exe = EXE(
     version='file_version_info.txt',
     icon='NONE',
 )
+
+# Manual data collection for macOS browsers
+extra_datas = a.datas
+if sys.platform == 'darwin':
+    # Add pw-browsers manually to the collection step
+    if os.path.exists('pw-browsers'):
+        from PyInstaller.building.api import Tree
+        extra_datas += Tree('pw-browsers', prefix='pw-browsers')
+
 coll = COLLECT(
     exe,
     a.binaries,
-    a.datas,
+    extra_datas,
     strip=False,
     upx=False,
     upx_exclude=[],
