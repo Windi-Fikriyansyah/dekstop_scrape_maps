@@ -1,0 +1,89 @@
+name: Build Desktop App
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Playwright Browsers
+        run: |
+          # Set the path where browsers should be installed
+          export PLAYWRIGHT_BROWSERS_PATH=./pw-browsers
+          playwright install chromium
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller MapsLeadScraper.spec
+
+      - name: Create DMG
+        run: |
+          brew install create-dmg
+          mkdir -p dist/dmg
+          create-dmg \
+            --volname "MapsLeadScraper" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 100 \
+            --icon "MapsLeadScraper.app" 200 190 \
+            --hide-extension "MapsLeadScraper.app" \
+            --app-drop-link 600 185 \
+            "dist/MapsLeadScraper.dmg" \
+            "dist/MapsLeadScraper.app"
+
+      - name: Upload macOS Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MapsLeadScraper-macOS
+          path: dist/MapsLeadScraper.dmg
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Install Playwright Browsers
+        run: |
+          $env:PLAYWRIGHT_BROWSERS_PATH = "pw-browsers"
+          playwright install chromium
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller MapsLeadScraper.spec
+
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MapsLeadScraper-Windows
+          path: dist/MapsLeadScraper

@@ -32,5 +32,15 @@ contacts.csv
 scraper.log
 
 # Playwright & OS files
+pw-browsers/
 .DS_Store
 Thumbs.db
+
+# Session & Data
+wa_session/
+user_data/
+li_session.pkl
+scraper_progress.json
+config.json
+*.db
+*.db-journal

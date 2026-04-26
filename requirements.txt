@@ -4,3 +4,11 @@ sqlalchemy
 pandas
 openpyxl
 python-dotenv
+pydantic
+requests
+tldextract
+tenacity
+python-dateutil
+beautifulsoup4
+2captcha-python
+selenium

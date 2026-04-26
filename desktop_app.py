@@ -1,9 +1,35 @@
 import os
 import sys
+import multiprocessing
 import asyncio
 
 # PENTING: Paksa Playwright menggunakan lokasi browser global (WAJIB paling atas)
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+# PENTING: Paksa Playwright menggunakan lokasi browser lokal agar portable dan stabil
+# --- Path Configuration ---
+if getattr(sys, 'frozen', False):
+    # Lokasi aplikasi (.exe)
+    EXE_DIR = os.path.dirname(sys.executable)
+    
+    # Prioritas 1: Cek folder 'pw-browsers' yang dibundel di dalam folder aplikasi (PORTABLE MODE)
+    # PyInstaller 6+ menyimpan data di folder '_internal'
+    PORTABLE_BROWSER_DIR = os.path.join(EXE_DIR, "_internal", "pw-browsers")
+    if not os.path.exists(PORTABLE_BROWSER_DIR):
+        PORTABLE_BROWSER_DIR = os.path.join(EXE_DIR, "pw-browsers")
+
+    if os.path.exists(PORTABLE_BROWSER_DIR):
+        BROWSER_DIR = PORTABLE_BROWSER_DIR
+        STORAGE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "WAMaps")
+    else:
+        # Prioritas 2: AppData (Download on demand)
+        STORAGE_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "WAMaps")
+        BROWSER_DIR = os.path.join(STORAGE_DIR, "pw-browsers")
+else:
+    # Jika dijalankan sebagai script python
+    STORAGE_DIR = os.getcwd()
+    BROWSER_DIR = os.path.join(STORAGE_DIR, "pw-browsers")
+
+os.makedirs(STORAGE_DIR, exist_ok=True)
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = BROWSER_DIR
 
 import csv
 import random
@@ -12,6 +38,7 @@ import threading
 import time
 import tkinter as tk
 import urllib.parse
+import requests
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -33,6 +60,11 @@ try:
     from instagram_engine import InstagramScraper
 except ImportError:
     InstagramScraper = None
+
+try:
+    from staffspy import LinkedInAccount
+except ImportError:
+    LinkedInAccount = None
 
 def check_playwright_browser():
     """Checks if chromium is installed for playwright."""
@@ -67,6 +99,59 @@ COLORS = {
     "table_row_2":  "#141428",
     "table_header": "#252545",
 }
+
+# --- Country Codes Data ---
+COUNTRY_DATA = [
+    ("Afghanistan", "93"), ("Albania", "355"), ("Algeria", "213"), ("Andorra", "376"),
+    ("Angola", "244"), ("Argentina", "54"), ("Armenia", "374"), ("Australia", "61"),
+    ("Austria", "43"), ("Azerbaijan", "994"), ("Bahamas", "1242"), ("Bahrain", "973"),
+    ("Bangladesh", "880"), ("Barbados", "1246"), ("Belarus", "375"), ("Belgium", "32"),
+    ("Belize", "501"), ("Benin", "229"), ("Bhutan", "975"), ("Bolivia", "591"),
+    ("Bosnia and Herzegovina", "387"), ("Botswana", "267"), ("Brazil", "55"), ("Brunei", "673"),
+    ("Bulgaria", "359"), ("Burkina Faso", "226"), ("Burundi", "257"), ("Cambodia", "855"),
+    ("Cameroon", "237"), ("Canada", "1"), ("Cape Verde", "238"), ("Central African Republic", "236"),
+    ("Chad", "235"), ("Chile", "56"), ("China", "86"), ("Colombia", "57"),
+    ("Comoros", "269"), ("Congo", "242"), ("Cook Islands", "682"), ("Costa Rica", "506"),
+    ("Croatia", "385"), ("Cuba", "53"), ("Cyprus", "357"), ("Czech Republic", "420"),
+    ("Denmark", "45"), ("Djibouti", "253"), ("Dominica", "1767"), ("Dominican Republic", "1809"),
+    ("Ecuador", "593"), ("Egypt", "20"), ("El Salvador", "503"), ("Equatorial Guinea", "240"),
+    ("Eritrea", "291"), ("Estonia", "372"), ("Ethiopia", "251"), ("Fiji", "679"),
+    ("Finland", "358"), ("France", "33"), ("Gabon", "241"), ("Gambia", "220"),
+    ("Georgia", "995"), ("Germany", "49"), ("Ghana", "233"), ("Greece", "30"),
+    ("Grenada", "1473"), ("Guatemala", "502"), ("Guinea", "224"), ("Guinea-Bissau", "245"),
+    ("Guyana", "592"), ("Haiti", "509"), ("Honduras", "504"), ("Hong Kong", "852"),
+    ("Hungary", "36"), ("Iceland", "354"), ("India", "91"), ("Indonesia", "62"),
+    ("Iran", "98"), ("Iraq", "964"), ("Ireland", "353"), ("Israel", "972"),
+    ("Italy", "39"), ("Jamaica", "1876"), ("Japan", "81"), ("Jordan", "962"),
+    ("Kazakhstan", "7"), ("Kenya", "254"), ("Kiribati", "686"), ("Kuwait", "965"),
+    ("Kyrgyzstan", "996"), ("Laos", "856"), ("Latvia", "371"), ("Lebanon", "961"),
+    ("Lesotho", "266"), ("Liberia", "231"), ("Libya", "218"), ("Liechtenstein", "423"),
+    ("Lithuania", "370"), ("Luxembourg", "352"), ("Macau", "853"), ("Macedonia", "389"),
+    ("Madagascar", "261"), ("Malawi", "265"), ("Malaysia", "60"), ("Maldives", "960"),
+    ("Mali", "223"), ("Malta", "356"), ("Marshall Islands", "692"), ("Mauritania", "222"),
+    ("Mauritius", "230"), ("Mexico", "52"), ("Micronesia", "691"), ("Moldova", "373"),
+    ("Monaco", "377"), ("Mongolia", "976"), ("Montenegro", "382"), ("Montserrat", "1664"),
+    ("Morocco", "212"), ("Mozambique", "258"), ("Myanmar", "95"), ("Namibia", "264"),
+    ("Nauru", "674"), ("Nepal", "977"), ("Netherlands", "31"), ("New Zealand", "64"),
+    ("Nicaragua", "505"), ("Niger", "227"), ("Nigeria", "234"), ("Niue", "683"),
+    ("North Korea", "850"), ("Norway", "47"), ("Oman", "968"), ("Pakistan", "92"),
+    ("Palau", "680"), ("Panama", "507"), ("Papua New Guinea", "675"), ("Paraguay", "595"),
+    ("Peru", "51"), ("Philippines", "63"), ("Poland", "48"), ("Portugal", "351"),
+    ("Puerto Rico", "1787"), ("Qatar", "974"), ("Romania", "40"), ("Russia", "7"),
+    ("Rwanda", "250"), ("Samoa", "685"), ("San Marino", "378"), ("Saudi Arabia", "966"),
+    ("Senegal", "221"), ("Serbia", "381"), ("Seychelles", "248"), ("Sierra Leone", "232"),
+    ("Singapore", "65"), ("Slovakia", "421"), ("Slovenia", "386"), ("Solomon Islands", "677"),
+    ("Somalia", "252"), ("South Africa", "27"), ("South Korea", "82"), ("Spain", "34"),
+    ("Sri Lanka", "94"), ("Sudan", "249"), ("Suriname", "597"), ("Swaziland", "268"),
+    ("Sweden", "46"), ("Switzerland", "41"), ("Syria", "963"), ("Taiwan", "886"),
+    ("Tajikistan", "992"), ("Tanzania", "255"), ("Thailand", "66"), ("Togo", "228"),
+    ("Tonga", "676"), ("Trinidad and Tobago", "1868"), ("Tunisia", "216"), ("Turkey", "90"),
+    ("Turkmenistan", "993"), ("Tuvalu", "688"), ("Uganda", "256"), ("Ukraine", "380"),
+    ("United Arab Emirates", "971"), ("United Kingdom", "44"), ("United States", "1"),
+    ("Uruguay", "598"), ("Uzbekistan", "998"), ("Vanuatu", "678"), ("Venezuela", "58"),
+    ("Vietnam", "84"), ("Yemen", "967"), ("Zambia", "260"), ("Zimbabwe", "263")
+]
+
 
 
 class ScraperEngine:
@@ -257,7 +342,7 @@ class BroadcastEngine:
         except Exception:
             return None
 
-    def run(self, contacts, message_template, delay_min=10, delay_max=30, break_every=50, break_duration=10, image_path=None, check_string=None):
+    def run(self, contacts, message_template, delay_min=10, delay_max=30, break_every=50, break_duration=10, image_path=None, check_string=None, default_country_code="62"):
         self.is_running = True
         total = len(contacts)
         self.callback_log(f"🚀 Memulai campaign premium ke {total} kontak...")
@@ -270,7 +355,7 @@ class BroadcastEngine:
         context = None
         try:
             with sync_playwright() as p:
-                data_dir = os.path.join(os.getcwd(), "wa_session")
+                data_dir = os.path.join(STORAGE_DIR, "wa_session")
                 os.makedirs(data_dir, exist_ok=True)
                 
                 # === STEP 1: Buka browser VISIBLE dulu untuk cek login / scan QR ===
@@ -331,19 +416,23 @@ class BroadcastEngine:
                 for idx, contact in enumerate(contacts):
                     if not self.is_running: break
                     
-                    phone = str(contact.get('phone', '')).strip()
-                    phone = re.sub(r'[^\d]', '', phone)
+                    # Normalisasi Nomor (Mendukung Internasional)
+                    phone_raw = str(contact.get('phone', '')).strip()
+                    is_international = phone_raw.startswith('+')
+                    
+                    phone = re.sub(r'[^\d]', '', phone_raw)
                     if not phone or len(phone) < 8:
                         self.callback_log(f"⏭️ [{idx+1}/{total}] Nomor tidak valid, dilewati.")
                         skipped_count += 1
                         self.callback_progress(idx + 1, total)
                         continue
                     
-                    # Normalisasi nomor Indonesia
                     if phone.startswith('0'):
-                        phone = '62' + phone[1:]
-                    elif not phone.startswith('62'):
-                        phone = '62' + phone
+                        # Jika diawali 0, ganti dengan kode negara default
+                        phone = default_country_code + phone[1:]
+                    elif not is_international and not phone.startswith(default_country_code) and len(phone) < 11:
+                        # Jika nomor pendek dan tidak diawali kode default, tambahkan default sebagai pengaman
+                        phone = default_country_code + phone
 
                     # --- Cooling Period (Anti-Ban) ---
                     if sent_count > 0 and sent_count % break_every == 0:
@@ -600,12 +689,189 @@ class BroadcastEngine:
             except: pass
 
 
+
+class LoginWindow(ctk.CTk):
+    def __init__(self):
+        super().__init__()
+        self.title("WAMaps - Login")
+        self.geometry("400x600")
+        self.configure(fg_color=COLORS["bg_dark"])
+        self.resizable(True, True)
+        
+        # Center the window
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x = (screen_width // 2) - (400 // 2)
+        y = (screen_height // 2) - (550 // 2)
+        self.geometry(f"400x550+{x}+{y}")
+        
+        self.login_successful = False
+        
+        # API Configuration
+        # Defaults to localhost for development, but can be changed
+        self.api_base_url = os.environ.get("WAMAPS_API_URL", "https://apiwamaps.myxyzz.online")
+
+        # UI Elements
+        self.main_frame = ctk.CTkFrame(self, fg_color=COLORS["bg_card"], corner_radius=20)
+        self.main_frame.pack(expand=True, fill="both", padx=30, pady=30)
+        
+        # Logo / Icon placeholder
+        self.logo_label = ctk.CTkLabel(
+            self.main_frame, 
+            text="📍", 
+            font=("Segoe UI", 48)
+        )
+        self.logo_label.pack(pady=(20, 5))
+        
+        self.title_label = ctk.CTkLabel(
+            self.main_frame, 
+            text="WAMaps", 
+            font=("Segoe UI Bold", 28), 
+            text_color=COLORS["accent"]
+        )
+        self.title_label.pack(pady=(0, 5))
+        
+        self.subtitle_label = ctk.CTkLabel(
+            self.main_frame, 
+            text="Lead Generation Solution", 
+            font=("Segoe UI", 12), 
+            text_color=COLORS["text_secondary"]
+        )
+        self.subtitle_label.pack(pady=(0, 20))
+        
+        # Input Fields Container
+        self.input_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.input_container.pack(fill="x", padx=30)
+        
+        # Email Field
+        ctk.CTkLabel(self.input_container, text="Email Address", font=("Segoe UI Semibold", 12), text_color=COLORS["text_primary"]).pack(anchor="w", pady=(0, 5))
+        self.entry_email = ctk.CTkEntry(
+            self.input_container, 
+            placeholder_text="name@example.com", 
+            height=45, 
+            fg_color=COLORS["bg_input"], 
+            border_color=COLORS["border"],
+            text_color=COLORS["text_primary"]
+        )
+        self.entry_email.pack(fill="x", pady=(0, 15))
+        
+        # Password Field
+        ctk.CTkLabel(self.input_container, text="Password", font=("Segoe UI Semibold", 12), text_color=COLORS["text_primary"]).pack(anchor="w", pady=(0, 5))
+        self.entry_password = ctk.CTkEntry(
+            self.input_container, 
+            placeholder_text="••••••••", 
+            show="*", 
+            height=45, 
+            fg_color=COLORS["bg_input"], 
+            border_color=COLORS["border"],
+            text_color=COLORS["text_primary"]
+        )
+        self.entry_password.pack(fill="x", pady=(0, 10))
+        
+        # Status Label (untuk pesan error)
+        self.status_label = ctk.CTkLabel(
+            self.main_frame, 
+            text="", 
+            font=("Segoe UI", 11), 
+            text_color=COLORS["danger"],
+            wraplength=300
+        )
+        self.status_label.pack(pady=2)
+        
+        # --- BUTTON SECTION ---
+        self.button_container = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+        self.button_container.pack(fill="x", padx=30, pady=(5, 10))
+        
+        # Main Login Button
+        self.btn_login = ctk.CTkButton(
+            self.button_container, 
+            text="MASUK KE AKUN", 
+            command=self._handle_login, 
+            height=50, 
+            fg_color=COLORS["accent"], 
+            hover_color=COLORS["accent_hover"],
+            font=("Segoe UI Bold", 14),
+            corner_radius=12
+        )
+        self.btn_login.pack(fill="x", pady=(0, 10))
+        
+        # Exit Button
+        self.btn_exit = ctk.CTkButton(
+            self.button_container, 
+            text="Keluar Aplikasi", 
+            command=self.destroy, 
+            height=35, 
+            fg_color="transparent", 
+            border_width=1,
+            border_color=COLORS["border"],
+            text_color=COLORS["text_secondary"],
+            hover_color=COLORS["bg_input"],
+            font=("Segoe UI", 12),
+            corner_radius=10
+        )
+        self.btn_exit.pack(fill="x")
+        
+        # Version Tag
+        self.version_label = ctk.CTkLabel(
+            self.main_frame, 
+            text="WAMaps v1.0.0", 
+            font=("Segoe UI", 10), 
+            text_color=COLORS["text_muted"]
+        )
+        self.version_label.pack(side="bottom", pady=5)
+        
+        # Bind Enter key untuk login cepat
+        self.bind("<Return>", lambda event: self._handle_login())
+
+    def _handle_login(self):
+        email = self.entry_email.get().strip()
+        password = self.entry_password.get().strip()
+        
+        if not email or not password:
+            self.status_label.configure(text="Email dan password wajib diisi!")
+            return
+            
+        self.btn_login.configure(state="disabled", text="Memverifikasi...")
+        self.status_label.configure(text="")
+        self.update()
+        
+        try:
+            # Login via API (OAuth2PasswordRequestForm expects form-data)
+            login_url = f"{self.api_base_url}/auth/login"
+            payload = {
+                "username": email,
+                "password": password
+            }
+            
+            response = requests.post(login_url, data=payload, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                # Store token if needed for future authenticated requests
+                self.token = data.get("access_token")
+                self.login_successful = True
+                self.destroy()
+            else:
+                try:
+                    error_msg = response.json().get("detail", "Email atau password salah")
+                except:
+                    error_msg = "Gagal terhubung ke server login"
+                self.status_label.configure(text=error_msg)
+                self.btn_login.configure(state="normal", text="Login Sekarang")
+        except requests.exceptions.ConnectionError:
+            self.status_label.configure(text="Gagal terhubung ke server (Offline)")
+            self.btn_login.configure(state="normal", text="Login Sekarang")
+        except Exception as e:
+            self.status_label.configure(text=f"Error: {str(e)}")
+            self.btn_login.configure(state="normal", text="Login Sekarang")
+
+
 class ModernApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
         # ─── Window Setup ─────────────────────────────────────────────────
-        self.title("Maps Lead Scraper")
+        self.title("WAMaps")
         # Start with a more minimalist size
         self.geometry("1000x650")
         self.minsize(800, 550)
@@ -621,18 +887,21 @@ class ModernApp(ctk.CTk):
         self.tab_scraper = self.tabview.add("Scraper ✨")
         self.tab_saved = self.tabview.add("Data Tersimpan 📁")
         self.tab_broadcast = self.tabview.add("Broadcast 💬")
-        self.tab_instagram = self.tabview.add("Instagram 📸")
+        self.tab_instagram = self.tabview.add("Instagram (Incoming) 📸")
+        self.tab_linkedin = self.tabview.add("LinkedIn ✨")
 
         self.broadcast_contacts = []
         self.bc_engine = None
         self.bc_image_path = None # Store attached image path
         self.current_ig_results = []
         self.ig_scraper_instance = None
+        self.current_li_results = []
 
         self._setup_scraper_tab()
         self._setup_saved_tab()
         self._setup_broadcast_tab()
         self._setup_instagram_tab()
+        self._setup_linkedin_tab()
         self._setup_styles()
         
         # Check for browser on a separate thread to not freeze UI immediately
@@ -649,23 +918,50 @@ class ModernApp(ctk.CTk):
             self._log("🛠️ Mengunduh browser Chromium (wajib)...")
             self._log("Mohon tunggu, ini mungkin memakan waktu 1-3 menit.")
             try:
-                # Menggunakan subprocess agar lebih aman terhadap ModuleNotFoundError
-                # creationflags=0x08000000 (CREATE_NO_WINDOW) agar tidak muncul jendela hitam
-                subprocess.run(
-                    [sys.executable, "-m", "playwright", "install", "chromium"],
-                    check=True,
+                import playwright
+                from pathlib import Path
+                
+                # Cari lokasi driver playwright yang dibundel
+                driver_path = Path(playwright.__file__).parent / "driver"
+                node_exe = driver_path / "node.exe"
+                cli_js = driver_path / "package" / "cli.js"
+                
+                if getattr(sys, 'frozen', False) and node_exe.exists() and cli_js.exists():
+                    self._log(f"📍 Menggunakan driver bundled: {node_exe.name}")
+                    cmd = [str(node_exe), str(cli_js), "install", "chromium"]
+                else:
+                    cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+
+                self._log(f"🚀 Memproses instalasi browser...")
+                
+                # Gunakan STARTUPINFO untuk menyembunyikan jendela console subprocess di Windows (EXE)
+                startupinfo = None
+                if os.name == 'nt' and getattr(sys, 'frozen', False):
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0 # SW_HIDE
+
+                process = subprocess.run(
+                    cmd,
                     capture_output=True,
                     text=True,
-                    creationflags=0x08000000 if os.name == 'nt' else 0
+                    startupinfo=startupinfo,
+                    env=os.environ.copy()
                 )
                 
-                if check_playwright_browser():
-                    self._log("✅ Browser berhasil diinstal!")
+                if process.returncode == 0:
+                    if check_playwright_browser():
+                        self._log("✅ Browser berhasil diinstal!")
+                    else:
+                        self._log("❌ Instalasi selesai tapi browser masih belum terdeteksi.")
+                        self._log(f"DEBUG info: {process.stdout}")
                 else:
-                    self._log("❌ Instalasi selesai tapi browser belum terdeteksi.")
+                    error_msg = (process.stderr or "").strip() or (process.stdout or "").strip() or "No output from process."
+                    self._log(f"❌ Detail Eror (Code {process.returncode}): {error_msg}")
+                    raise Exception(f"Eror {process.returncode}: {error_msg}")
             except Exception as e:
-                self._log(f"❌ Gagal menginstal browser: {str(e)}")
-                messagebox.showerror("Error Browser", f"Gagal mengunduh browser: {str(e)}")
+                self._log(f"❌ Gagal menginstal: {str(e)}")
+                messagebox.showerror("Error Browser", f"Gagal mengunduh browser:\n\n{str(e)}\n\nPastikan Anda terhubung ke internet.")
         else:
             self._log("✅ Sistem browser siap!")
             
@@ -839,6 +1135,27 @@ class ModernApp(ctk.CTk):
         self.entry_bc_duplicate = ctk.CTkEntry(inner, placeholder_text="Contoh: Kami mendapatkan kontak", fg_color=COLORS["bg_input"], text_color="white")
         self.entry_bc_duplicate.pack(fill="x", pady=(0, 15))
 
+        # International Settings
+        ctk.CTkLabel(inner, text="🌐 Pengaturan Internasional", font=("Segoe UI Semibold", 12), text_color=COLORS["accent_light"]).pack(anchor="w", pady=(5, 5))
+        ctk.CTkLabel(inner, text="Pilih Negara (Default)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
+        
+        # Buat list untuk dropdown
+        self.country_options = [f"{n} (+{c})" for n, c in COUNTRY_DATA]
+        self.combo_country = ctk.CTkComboBox(
+            inner, 
+            values=self.country_options, 
+            fg_color=COLORS["bg_input"], 
+            text_color="white", 
+            border_color=COLORS["border"],
+            dropdown_fg_color=COLORS["bg_card"],
+            dropdown_hover_color=COLORS["accent"],
+            dropdown_text_color="white",
+            button_color=COLORS["accent"],
+            height=35
+        )
+        self.combo_country.set("Indonesia (+62)")
+        self.combo_country.pack(fill="x", pady=(0, 15))
+
         self.btn_bc_start = ctk.CTkButton(inner, text="Mulai Campaign Premium 🚀", fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self._start_broadcast, height=45, font=("Segoe UI Bold", 13))
         self.btn_bc_start.pack(fill="x", pady=(15, 5))
 
@@ -895,7 +1212,12 @@ class ModernApp(ctk.CTk):
         inner = ctk.CTkFrame(sidebar, fg_color="transparent")
         inner.pack(fill="both", expand=True, padx=5, pady=5)
 
-        ctk.CTkLabel(inner, text="PENGATURAN INSTAGRAM", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,15))
+        ctk.CTkLabel(inner, text="PENGATURAN INSTAGRAM", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,5))
+        
+        # Badge Incoming
+        badge_frame = ctk.CTkFrame(inner, fg_color=COLORS["warning"], corner_radius=5)
+        badge_frame.pack(fill="x", pady=(0, 15))
+        ctk.CTkLabel(badge_frame, text="STILL IN DEVELOPMENT (INCOMING)", font=("Segoe UI Bold", 10), text_color="black").pack(pady=2)
 
         self.entry_ig_user = self._add_field(inner, "👤 Username", "Instagram Username")
         self.entry_ig_pass = self._add_field(inner, "🔑 Password", "Instagram Password")
@@ -944,18 +1266,20 @@ class ModernApp(ctk.CTk):
         tree_container = ctk.CTkFrame(main_area, fg_color="transparent")
         tree_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
 
-        cols = ("no", "full_name", "username", "followers", "following", "posts", "engagement", "email", "link")
+        cols = ("no", "full_name", "username", "followers", "following", "posts", "email", "whatsapp", "bio", "ext_link", "link")
         self.tree_ig = ttk.Treeview(tree_container, columns=cols, show="headings", style="Custom.Treeview")
         
         headings = {
             "no": "No", "full_name": "Nama Lengkap", "username": "Username", 
             "followers": "Followers", "following": "Following", "posts": "Posts",
-            "engagement": "Engagement", "email": "Email", "link": "Link IG"
+            "email": "Email", "whatsapp": "No. WhatsApp", "bio": "Bio",
+            "ext_link": "Link Eksternal", "link": "Link IG"
         }
         widths = {
-            "no": 40, "full_name": 150, "username": 120, 
-            "followers": 80, "following": 80, "posts": 60,
-            "engagement": 100, "email": 150, "link": 150
+            "no": 40, "full_name": 130, "username": 110, 
+            "followers": 70, "following": 70, "posts": 50,
+            "email": 140, "whatsapp": 120, "bio": 200,
+            "ext_link": 180, "link": 140
         }
 
         for c, h in headings.items():
@@ -1018,10 +1342,8 @@ class ModernApp(ctk.CTk):
                 callback_log=lambda m, level="INFO": self.after(0, lambda: self._ig_log(f"{m}")),
                 callback_result=lambda r: self.after(0, lambda: self._on_ig_result(r)),
                 callback_progress=lambda c, t: self.after(0, lambda: self.ig_progress.set(c/t)),
-                headless=self.var_ig_headless.get()
+                headless=False  # Always headful - needed for manual login & CAPTCHA
             )
-            self.ig_scraper_instance.config['headless'] = self.var_ig_headless.get()
-            self.ig_scraper_instance.headless = self.var_ig_headless.get()
             
             try:
                 loop.run_until_complete(self.ig_scraper_instance.run(keyword=kw, limit=limit))
@@ -1038,6 +1360,11 @@ class ModernApp(ctk.CTk):
         self.current_ig_results.append(res)
         tag = "even" if idx % 2 == 0 else "odd"
         
+        # Truncate bio for table display
+        bio_short = res.get("bio", "")
+        if bio_short and len(bio_short) > 50:
+            bio_short = bio_short[:50] + "..."
+        
         self.tree_ig.insert("", "end", values=(
             idx,
             res.get("full_name", ""),
@@ -1045,8 +1372,10 @@ class ModernApp(ctk.CTk):
             res.get("followers", 0),
             res.get("following", 0),
             res.get("post_count", 0),
-            res.get("total_engagement", 0),
             res.get("email", ""),
+            res.get("whatsapp_number", ""),
+            bio_short,
+            res.get("external_link", ""),
             res.get("instagram_link", "")
         ), tags=(tag,))
 
@@ -1071,6 +1400,283 @@ class ModernApp(ctk.CTk):
             df = pd.DataFrame(self.current_ig_results)
             df.to_csv(path, index=False)
             messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  TAB 5: LINKEDIN
+    # ═══════════════════════════════════════════════════════════════════════
+    def _setup_linkedin_tab(self):
+        sidebar = ctk.CTkScrollableFrame(self.tab_linkedin, width=300, fg_color=COLORS["bg_card"], corner_radius=15, scrollbar_fg_color="transparent")
+        sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
+
+        inner = ctk.CTkFrame(sidebar, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(inner, text="PENGATURAN LINKEDIN", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,15))
+
+        self.var_li_target_type = tk.StringVar(value="Staff Perusahaan")
+        self.opt_li_type = ctk.CTkOptionMenu(
+            inner, 
+            variable=self.var_li_target_type, 
+            values=["Staff Perusahaan", "Cari User (by ID)", "Komentar Posting (Post ID)", "Detail Perusahaan", "Koneksi Saya"],
+            command=self._on_li_type_change
+        )
+        self.opt_li_type.pack(fill="x", pady=(0, 15))
+
+        self.lbl_li_target = ctk.CTkLabel(inner, text="🏢 Target Pencarian", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
+        self.lbl_li_target.pack(anchor="w")
+        self.entry_li_target = ctk.CTkEntry(inner, placeholder_text="Contoh: tokopedia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_target.pack(fill="x", pady=(0, 10))
+
+        self.lbl_li_keyword = ctk.CTkLabel(inner, text="🔍 Role / Posisi (Khusus Staff)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
+        self.lbl_li_keyword.pack(anchor="w")
+        self.entry_li_keyword = ctk.CTkEntry(inner, placeholder_text="Contoh: software engineer", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_keyword.pack(fill="x", pady=(0, 10))
+
+        self.lbl_li_location = ctk.CTkLabel(inner, text="📍 Lokasi (Khusus Staff)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
+        self.lbl_li_location.pack(anchor="w")
+        self.entry_li_location = ctk.CTkEntry(inner, placeholder_text="Contoh: indonesia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_location.pack(fill="x", pady=(0, 10))
+
+        self.entry_li_limit = self._add_field(inner, "📊 Batas Data", "20")
+        
+        self.var_li_extra = tk.BooleanVar(value=True)
+        self.cb_li_extra = ctk.CTkCheckBox(inner, text="Ambil Data Ekstra (Pengalaman, dll)", variable=self.var_li_extra, font=("Segoe UI", 11))
+        self.cb_li_extra.pack(anchor="w", pady=(0, 10))
+
+        self.btn_li_start = ctk.CTkButton(inner, text="Mulai Scrape LinkedIn 🚀", fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self._start_li_scraping, height=45, font=("Segoe UI Bold", 13))
+        self.btn_li_start.pack(fill="x", pady=(15, 5))
+
+        self.btn_li_stop = ctk.CTkButton(inner, text="Stop", fg_color=COLORS["danger"], state="disabled", command=self._stop_li_scraping)
+        self.btn_li_stop.pack(fill="x", pady=5)
+
+        self.li_progress = ctk.CTkProgressBar(inner, fg_color=COLORS["bg_input"], progress_color=COLORS["success"])
+        self.li_progress.set(0)
+        self.li_progress.pack(fill="x", pady=15)
+
+        self.li_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.li_log_box.pack(fill="x")
+
+        main_area = ctk.CTkFrame(self.tab_linkedin, fg_color=COLORS["bg_card"], corner_radius=15)
+        main_area.pack(side="right", fill="both", expand=True)
+        
+        header = ctk.CTkFrame(main_area, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(header, text="Hasil Scrape LinkedIn", font=("Segoe UI Semibold", 14)).pack(side="left")
+        ctk.CTkButton(header, text="Export Excel/CSV", fg_color=COLORS["success"], width=130, command=self._export_li_data).pack(side="right", padx=5)
+
+        tree_container = ctk.CTkFrame(main_area, fg_color="transparent")
+        tree_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        # Dynamic Treeview setup handled by _update_li_table_columns later
+        self.tree_li = ttk.Treeview(tree_container, show="headings", style="Custom.Treeview")
+        self._update_li_table_columns(
+            {"no": "No", "id": "User ID", "name": "Name", "headline": "Headline", "location": "Location", "url": "URL"},
+            {"no": 40, "id": 100, "name": 150, "headline": 200, "location": 120, "url": 150}
+        )
+
+        ysb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree_li.yview)
+        xsb = ttk.Scrollbar(tree_container, orient="horizontal", command=self.tree_li.xview)
+        self.tree_li.configure(yscroll=ysb.set, xscroll=xsb.set)
+        
+        self.tree_li.tag_configure("odd", background=COLORS["table_row_1"])
+        self.tree_li.tag_configure("even", background=COLORS["table_row_2"])
+
+        self.tree_li.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        xsb.grid(row=1, column=0, sticky="ew")
+        tree_container.grid_rowconfigure(0, weight=1)
+        tree_container.grid_columnconfigure(0, weight=1)
+
+    def _on_li_type_change(self, choice):
+        if choice == "Staff Perusahaan":
+            self.lbl_li_target.configure(text="🏢 Nama Perusahaan")
+            self.entry_li_target.configure(placeholder_text="Contoh: tokopedia", state="normal")
+            self.entry_li_keyword.configure(state="normal")
+            self.entry_li_location.configure(state="normal")
+            self.entry_li_limit.configure(state="normal")
+            self.cb_li_extra.configure(state="normal")
+        elif choice == "Cari User (by ID)":
+            self.lbl_li_target.configure(text="👤 User IDs (Pisahkan dengan koma)")
+            self.entry_li_target.configure(placeholder_text="Contoh: williamhgates, rbranson", state="normal")
+            self.entry_li_keyword.configure(state="disabled")
+            self.entry_li_location.configure(state="disabled")
+            self.entry_li_limit.configure(state="disabled")
+            self.cb_li_extra.configure(state="disabled")
+        elif choice == "Komentar Posting (Post ID)":
+            self.lbl_li_target.configure(text="📝 Post IDs (Pisahkan dengan koma)")
+            self.entry_li_target.configure(placeholder_text="Contoh: 725242195, 725308", state="normal")
+            self.entry_li_keyword.configure(state="disabled")
+            self.entry_li_location.configure(state="disabled")
+            self.entry_li_limit.configure(state="disabled")
+            self.cb_li_extra.configure(state="disabled")
+        elif choice == "Detail Perusahaan":
+            self.lbl_li_target.configure(text="🏢 Nama Perusahaan (Pisahkan koma)")
+            self.entry_li_target.configure(placeholder_text="Contoh: tokopedia, google", state="normal")
+            self.entry_li_keyword.configure(state="disabled")
+            self.entry_li_location.configure(state="disabled")
+            self.entry_li_limit.configure(state="disabled")
+            self.cb_li_extra.configure(state="disabled")
+        elif choice == "Koneksi Saya":
+            self.lbl_li_target.configure(text="🤝 Koneksi Saya (Kosongkan saja)")
+            self.entry_li_target.configure(placeholder_text="Tidak butuh target", state="disabled")
+            self.entry_li_keyword.configure(state="disabled")
+            self.entry_li_location.configure(state="disabled")
+            self.entry_li_limit.configure(state="normal")
+            self.cb_li_extra.configure(state="normal")
+
+    def _update_li_table_columns(self, headings, widths):
+        self.tree_li["columns"] = list(headings.keys())
+        for c in self.tree_li["columns"]:
+            self.tree_li.heading(c, text="") # clear
+        for c, h in headings.items():
+            self.tree_li.heading(c, text=h)
+            self.tree_li.column(c, width=widths.get(c, 100), stretch=False)
+
+    def _li_log(self, msg):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.li_log_box.insert("end", f"[{timestamp}] {msg}\n")
+        self.li_log_box.see("end")
+
+    def _start_li_scraping(self):
+        target = self.entry_li_target.get().strip()
+        kw = self.entry_li_keyword.get().strip()
+        loc = self.entry_li_location.get().strip()
+        extra_data = self.var_li_extra.get()
+        search_type = self.var_li_target_type.get()
+        
+        try: limit = int(self.entry_li_limit.get() or 20)
+        except: limit = 20
+        
+        if not LinkedInAccount:
+            messagebox.showerror("Error", "Modul StaffSpy tidak ditemukan atau gagal di-load. Pastikan semua instalasi dependency lengkap.")
+            return
+
+        if not target and search_type not in ["Koneksi Saya"]:
+            messagebox.showwarning("Peringatan", "Masukkan target pencarian (Perusahaan/ID).")
+            return
+            
+        self.btn_li_start.configure(state="disabled", text="Scraping...")
+        self.btn_li_stop.configure(state="normal")
+        self.li_progress.set(0)
+        
+        for item in self.tree_li.get_children():
+            self.tree_li.delete(item)
+        self.current_li_results = []
+        self._li_stop_flag = False
+        
+        # update temporary display
+        self._update_li_table_columns({"no": "No", "status": "Status"}, {"no": 40, "status": 200})
+        self.tree_li.insert("", "end", values=("", "Loading data..."))
+        
+        def run_scraper():
+            try:
+                self.after(0, lambda: self._li_log("🚀 Memulai login / menyiapkan session LinkedIn..."))
+                account = LinkedInAccount(session_file="li_session.pkl", log_level=1)
+                
+                df = None
+                if search_type == "Staff Perusahaan":
+                    self.after(0, lambda: self._li_log(f"🔎 Mencari {kw} di {target} ({loc})..."))
+                    df = account.scrape_staff(company_name=target, search_term=kw, location=loc, extra_profile_data=extra_data, max_results=limit)
+                elif search_type == "Cari User (by ID)":
+                    user_ids = [x.strip() for x in target.split(',') if x.strip()]
+                    self.after(0, lambda: self._li_log(f"🔎 Mencari {len(user_ids)} users..."))
+                    df = account.scrape_users(user_ids=user_ids)
+                elif search_type == "Komentar Posting (Post ID)":
+                    post_ids = [x.strip() for x in target.split(',') if x.strip()]
+                    self.after(0, lambda: self._li_log(f"🔎 Mengambil komentar dari {len(post_ids)} post..."))
+                    df = account.scrape_comments(post_ids=post_ids)
+                elif search_type == "Detail Perusahaan":
+                    names = [x.strip() for x in target.split(',') if x.strip()]
+                    self.after(0, lambda: self._li_log(f"🔎 Mengambil detail dari {len(names)} perusahaan..."))
+                    df = account.scrape_companies(company_names=names)
+                elif search_type == "Koneksi Saya":
+                    self.after(0, lambda: self._li_log(f"🔎 Mengambil list koneksi Anda..."))
+                    df = account.scrape_connections(max_results=limit, extra_profile_data=extra_data)
+
+                if self._li_stop_flag:
+                    self.after(0, lambda: self._li_log("🛑 Scraping dihentikan."))
+                    return
+                
+                if df is not None and not df.empty:
+                    self.after(0, lambda: self._li_log(f"✅ Ditemukan {len(df)} data."))
+                    
+                    df_cols = list(df.columns)
+                    display_cols = {"no": "No"}
+                    for c in df_cols:
+                        display_cols[c] = c.replace("_", " ").title()
+                    
+                    widths_map = {"no": 40}
+                    for c in df_cols:
+                        if c in ["text", "bio", "experiences"]: widths_map[c] = 300
+                        elif c in ["headline", "headquarters_address", "schools", "skills"]: widths_map[c] = 200
+                        elif "url" in c or "link" in c or "name" in c or "email" in c: widths_map[c] = 160
+                        else: widths_map[c] = 100
+                        
+                    def set_columns(cs, wds):
+                        for item in self.tree_li.get_children(): self.tree_li.delete(item)
+                        self._update_li_table_columns(cs, wds)
+                    
+                    self.after(0, lambda c=display_cols, w=widths_map: set_columns(c, w))
+                    
+                    for idx, row in df.iterrows():
+                        r_data = row.to_dict()
+                        self.current_li_results.append(r_data)
+                        
+                        r_data_all = [idx+1]
+                        for c in df_cols:
+                            val = r_data.get(c, "")
+                            v_str = str(val).strip()
+                            if v_str in ["nan", "None", "[]", "{}"]: 
+                                v_str_neat = "-"
+                            else:
+                                v_str_neat = v_str.replace('\n', ' ').replace('\r', '')
+                                if len(v_str_neat) > 100: 
+                                    v_str_neat = v_str_neat[:97] + "..."
+                            r_data_all.append(v_str_neat)
+                        
+                        tag = "even" if (idx+1) % 2 == 0 else "odd"
+                        self.after(0, lambda vals=r_data_all, t=tag: self.tree_li.insert("", "end", values=vals, tags=(t,)))
+                        progress = min((idx + 1) / len(df), 1.0)
+                        self.after(0, lambda p=progress: self.li_progress.set(p))
+                else:
+                    self.after(0, lambda: (
+                        [self.tree_li.delete(i) for i in self.tree_li.get_children()],
+                        self._li_log("⚠️ Tidak ada data ditemukan.")
+                    ))
+            except Exception as e:
+                err_msg = str(e)
+                self.after(0, lambda msg=err_msg: self._li_log(f"❌ Error: {msg}"))
+            finally:
+                self.after(0, self._on_li_done)
+
+        self.li_thread = threading.Thread(target=run_scraper, daemon=True)
+        self.li_thread.start()
+
+    def _on_li_done(self):
+        self.btn_li_start.configure(state="normal", text="Mulai Scrape LinkedIn 🚀")
+        self.btn_li_stop.configure(state="disabled")
+        self._li_log("✨ Scraping LinkedIn Selesai!")
+
+    def _stop_li_scraping(self):
+        self._li_log("🛑 Permintaan berhenti dikirim (menunggu loop selesai)...")
+        self._li_stop_flag = True
+
+    def _export_li_data(self):
+        if not hasattr(self, 'current_li_results') or not self.current_li_results:
+            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
+            return
+        
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx"), ("CSV files", "*.csv")])
+        if path:
+            try:
+                df = pd.DataFrame(self.current_li_results)
+                if path.endswith(".xlsx"):
+                    df.to_excel(path, index=False)
+                else:
+                    df.to_csv(path, index=False)
+                messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Gagal mengekspor data: {str(e)}")
 
     # ═══════════════════════════════════════════════════════════════════════
     #  HELPERS
@@ -1506,12 +2112,40 @@ class ModernApp(ctk.CTk):
             callback_done=self._on_finish_bc
         )
         # Menjalankan broadcast di thread terpisah agar UI tidak membeku
+        selected_country = self.combo_country.get()
+        # Ambil kode angka saja dari format "Negara (+XX)"
+        import re
+        match = re.search(r'\+(\d+)', selected_country)
+        country_code = match.group(1) if match else "62"
+        
         threading.Thread(
             target=self.bc_engine.run, 
-            args=(self.broadcast_contacts, msg, d_min, d_max, b_every, b_dur, self.bc_image_path, self.entry_bc_duplicate.get().strip()), 
+            args=(self.broadcast_contacts, msg, d_min, d_max, b_every, b_dur, self.bc_image_path, self.entry_bc_duplicate.get().strip(), country_code), 
             daemon=True
         ).start()
 
 if __name__ == "__main__":
-    app = ModernApp()
-    app.mainloop()
+    # Penting untuk aplikasi Windows yang di-package dengan PyInstaller/EXE
+    multiprocessing.freeze_support()
+    
+    # PERBAIKAN KRUCIAL: Jika dipanggil sebagai subprocess untuk install playwright, 
+    # jalankan CLI playwright alih-alih membuka jendela GUI baru.
+    # Ini mencegah "infinite loop" jendela saat pertama kali aplikasi dijalankan.
+    if len(sys.argv) > 2 and sys.argv[1] == "-m" and sys.argv[2] == "playwright":
+        try:
+            from playwright.__main__ import main
+            sys.exit(main())
+        except Exception:
+            sys.exit(1)
+            
+    # Show Login Window First
+    login_app = LoginWindow()
+    login_app.mainloop()
+    
+    # If login was successful, start the main application
+    if hasattr(login_app, 'login_successful') and login_app.login_successful:
+        app = ModernApp()
+        app.mainloop()
+    else:
+        # User closed the window or login failed
+        sys.exit(0)

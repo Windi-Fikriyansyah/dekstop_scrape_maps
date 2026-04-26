@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import TextIO, Set, List, Optional, Dict
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeoutError, Page
 from dotenv import load_dotenv
+import urllib.parse
 import unicodedata
 
 load_dotenv()
@@ -53,7 +54,9 @@ class InstagramScraper:
         self.callback_log = callback_log or (lambda msg: logger.info(msg))
         self.callback_result = callback_result or (lambda res: None)
         self.callback_progress = callback_progress or (lambda curr, total: None)
-        self.user_data_dir = os.path.join(os.getcwd(), self.config.get('user_data_dir', 'user_data'))
+        # Ensure we have an absolute path for session data
+        base_path = os.path.dirname(os.path.abspath(__file__))
+        self.user_data_dir = os.path.join(base_path, self.config.get('user_data_dir', 'user_data'))
         os.makedirs(self.user_data_dir, exist_ok=True)
         self.proxy_server = os.getenv('PROXY_SERVER')
         
@@ -73,6 +76,34 @@ class InstagramScraper:
         self.load_progress()
         self.shutdown = False
         self.page = None
+
+    async def setup_page_stealth(self, page: Page):
+        await page.add_init_script("""
+            Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+        """)
+        await page.context.grant_permissions(['geolocation'])
+        await page.evaluate("""
+            () => {
+                navigator.geolocation.getCurrentPosition = function(success, error, options) {
+                    if (typeof success === 'function') {
+                        success({
+                            coords: {
+                                latitude: 48.8566,
+                                longitude: 2.3522,
+                                accuracy: 1000
+                            },
+                            timestamp: Date.now()
+                        });
+                    }
+                    else if (typeof error === 'function') {
+                        error(new Error('Geolocation success callback is not a function'));
+                    }
+                };
+            }
+        """)
 
     def load_progress(self) -> None:
         try:
@@ -320,26 +351,19 @@ class InstagramScraper:
             return 0
 
     async def get_text(self, selector: str, context: Optional[Page] = None, default: str = 'N/A') -> str:
-        if selector == 'span._aohg':
-            return default
         context = context or self.page
-        for attempt in range(3):
-            try:
-                await context.wait_for_selector(selector, state='visible', timeout=15000)
-                element = await context.query_selector(selector)
-                if element and await element.is_visible():
-                    text = await element.inner_text()
-                    return text.strip() if text else default
-                await asyncio.sleep(2 ** attempt)
-            except Exception as e:
-                logger.warning(f"Attempt {attempt + 1} failed for selector {selector}: {e}")
-                if attempt == 2:
-                    return default
+        try:
+            element = await context.query_selector(selector)
+            if element and await element.is_visible():
+                text = await element.inner_text()
+                return text.strip() if text else default
+        except Exception as e:
+            pass
+        return default
 
     async def get_attr(self, selector: str, attr: str, context: Optional[Page] = None, default: str = 'N/A') -> str:
         try:
             context = context or self.page
-            await context.wait_for_selector(selector, state='visible', timeout=10000)
             element = await context.query_selector(selector)
             if element and await element.is_visible():
                 value = await element.get_attribute(attr)
@@ -355,8 +379,62 @@ class InstagramScraper:
         matches = re.findall(email_pattern, text, re.IGNORECASE)
         return matches[0] if matches else 'N/A'
 
+    def extract_whatsapp(self, text: str) -> dict:
+        """Extract WhatsApp number and link from text (bio, links, etc)."""
+        result = {'number': 'N/A', 'link': 'N/A'}
+        if not text or text == 'N/A':
+            return result
+        
+        # Pattern for wa.me links
+        wa_link_match = re.search(r'(https?://)?wa\.me/(\+?\d[\d\s.-]+)', text, re.IGNORECASE)
+        if wa_link_match:
+            full_link = wa_link_match.group(0)
+            if not full_link.startswith('http'):
+                full_link = 'https://' + full_link
+            number = re.sub(r'[^\d+]', '', wa_link_match.group(2))
+            result['link'] = full_link
+            result['number'] = number
+            return result
+        
+        # Pattern for api.whatsapp.com links
+        api_match = re.search(r'(https?://)?api\.whatsapp\.com/send\??[^\s]*phone=(\+?\d[\d\s.-]+)', text, re.IGNORECASE)
+        if api_match:
+            full_link = api_match.group(0)
+            if not full_link.startswith('http'):
+                full_link = 'https://' + full_link
+            number = re.sub(r'[^\d+]', '', api_match.group(2))
+            result['link'] = full_link
+            result['number'] = number
+            return result
+        
+        # Pattern for chat.whatsapp.com (group links - just capture link)
+        chat_match = re.search(r'(https?://)?chat\.whatsapp\.com/[^\s]+', text, re.IGNORECASE)
+        if chat_match:
+            full_link = chat_match.group(0)
+            if not full_link.startswith('http'):
+                full_link = 'https://' + full_link
+            result['link'] = full_link
+            return result
+
+        # Pattern for standalone phone numbers (Indonesian format)
+        phone_match = re.search(r'(?:WA|WhatsApp|Whatsapp|wa)[:\s]*([+]?\d[\d\s.-]{8,})', text, re.IGNORECASE)
+        if phone_match:
+            number = re.sub(r'[^\d+]', '', phone_match.group(1))
+            result['number'] = number
+            result['link'] = f'https://wa.me/{number}'
+            return result
+        
+        return result
+
     def normalize_unicode(self, text: str) -> str:
-        return unicodedata.normalize('NFKD', text).encode('ASCII', 'ignore').decode('ASCII') if text else text
+        """Clean string but preserve emojis and special characters."""
+        if not text or text == 'N/A':
+            return 'N/A'
+        # Normalize but don't strip non-ascii
+        text = unicodedata.normalize('NFC', text)
+        # Remove only control characters
+        text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C")
+        return text.strip() or 'N/A'
 
     async def navigate_to_profile(self, page: Page, username: str) -> bool:
         logger.info(f"Navigating to profile: {username}")
@@ -364,115 +442,287 @@ class InstagramScraper:
             try:
                 profile_url = f"https://www.instagram.com/{username}/"
                 await page.goto(profile_url, wait_until="domcontentloaded", timeout=60000)
-                await page.wait_for_selector('header[class*="xrvj5dj"], section[class*="xc3tme8"]', state='visible', timeout=30000)
-                await page.wait_for_timeout(5000)
-                await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
-                header = await page.query_selector('header[class*="xrvj5dj"]')
-                if header or await page.query_selector('section[class*="xc3tme8"]'):
+                
+                # Wait for the page body to have content
+                await page.wait_for_timeout(3000)
+                
+                # Check if we landed on a valid page using simple checks
+                body_text = await page.inner_text('body')
+                if body_text and len(body_text) > 100:
+                    # Check for error pages
+                    if "Sorry, this page isn't available" in body_text or "Page Not Found" in body_text:
+                        self.callback_log(f"   ⚠️ Profil @{username} tidak ditemukan.")
+                        return False
+                    await page.mouse.move(random.randint(100, 500), random.randint(100, 500))
                     return True
-                raise Exception("Profile page header or section not found")
+                
+                raise Exception("Page body is empty or too short")
             except Exception as e:
                 logger.warning(f"Navigation attempt {attempt + 1} failed: {str(e)}")
                 if attempt < 2:
-                    await self.random_delay()
+                    await self.random_delay(3, 5)
                     continue
                 logger.error(f"Failed to navigate to profile: {username}")
                 return False
 
-    async def wait_for_posts(self, page: Page, selector: str = 'a[href*="/p/"], a[href*="/reel/"], article', timeout: int = 60000) -> List:
+    async def extract_profile_data_js(self, page: Page, username: str) -> Optional[dict]:
+        """Extract all profile data using JavaScript for maximum reliability."""
         try:
-            await page.wait_for_selector(selector, state="visible", timeout=timeout)
-            return await page.query_selector_all(selector)
+            data = await page.evaluate("""
+                () => {
+                    const result = {
+                        full_name: 'N/A',
+                        posts: 0,
+                        followers: 0,
+                        following: 0,
+                        bio: 'N/A',
+                        is_private: false,
+                        no_posts: false
+                    };
+                    
+                    // Check private / no posts
+                    const bodyText = document.body.innerText || '';
+                    if (bodyText.includes('This account is private') || bodyText.includes('This Account is Private')) {
+                        result.is_private = true;
+                    }
+                    if (bodyText.includes('No Posts Yet')) {
+                        result.no_posts = true;
+                    }
+                    
+                    // Stats from header ul li
+                    const header = document.querySelector('header');
+                    if (header) {
+                        const headerSection = header.querySelector('section');
+                        if (headerSection) {
+                            const listItems = header.querySelectorAll('ul li');
+                            if (listItems.length >= 3) {
+                                const getText = (el) => {
+                                    const span = el.querySelector('span span') || el.querySelector('span');
+                                    if (span) {
+                                        const title = span.getAttribute('title');
+                                        if (title) return title;
+                                        return span.innerText || '';
+                                    }
+                                    return el.innerText || '';
+                                };
+                                result.posts_text = getText(listItems[0]);
+                                result.followers_text = getText(listItems[1]);
+                                result.following_text = getText(listItems[2]);
+                            }
+                        }
+                    }
+                    
+                    // === FULL NAME from og:title (most reliable) ===
+                    // Format: "DisplayName (@username) ..."
+                    const ogTitle = document.querySelector('meta[property="og:title"]');
+                    if (ogTitle) {
+                        const c = ogTitle.getAttribute('content') || '';
+                        const m = c.match(/^(.+?)\\s*\\(@/);
+                        if (m && m[1]) result.full_name = m[1].trim();
+                    }
+                    
+                    // Fallback: meta description "... from DisplayName (@username)"
+                    if (result.full_name === 'N/A') {
+                        const md = document.querySelector('meta[name="description"]');
+                        if (md) {
+                            const c = md.getAttribute('content') || '';
+                            const m = c.match(/from\\s+(.+?)\\s*\\(@/);
+                            if (m && m[1]) result.full_name = m[1].trim();
+                        }
+                    }
+                    
+                    // Fallback: document title
+                    if (result.full_name === 'N/A') {
+                        const t = document.title || '';
+                        const m = t.match(/^(.+?)\\s*\\(@/);
+                        if (m && m[1]) result.full_name = m[1].trim();
+                    }
+                    
+                    // Fallback: h1 or specialized spans in bio section
+                    if (result.full_name === 'N/A') {
+                        // Instagram often puts full name in a specific span inside the second div of section
+                        const section = document.querySelector('header section');
+                        if (section) {
+                            const spans = section.querySelectorAll('div > span');
+                            if (spans.length > 0) {
+                                // The first or second span often contains the display name
+                                for (let i = 0; i < Math.min(spans.length, 3); i++) {
+                                    const t = spans[i].innerText.trim();
+                                    if (t && t.length > 2 && !t.includes('@') && !['Follow', 'Following', 'Message'].includes(t)) {
+                                        result.full_name = t;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // === BIO from meta description ===
+                    // Format: "X Followers, X Following, X Posts - bio text. See Instagram..."
+                    const md2 = document.querySelector('meta[name="description"]');
+                    if (md2) {
+                        const c = md2.getAttribute('content') || '';
+                        const m = c.match(/[Pp]osts?\\s*[-\\u2013]\\s*(.*?)(?:\\s*See Instagram|$)/);
+                        if (m && m[1]) {
+                            let bio = m[1].replace(/See Instagram.*$/i, '').trim();
+                            if (bio && bio.length > 2) result.bio = bio;
+                        }
+                    }
+                    
+                    // Fallback bio from DOM
+                    if (result.bio === 'N/A') {
+                        const bc = document.querySelector('header + div') || document.querySelector('header section');
+                        if (bc) {
+                            const spans = bc.querySelectorAll('span');
+                            for (const span of spans) {
+                                const text = span.innerText.trim();
+                                if (text && text.length > 5 && text.length < 500) {
+                                    if (!text.match(/^\\d/) && !['Follow', 'Following', 'Message'].includes(text)) {
+                                        if (text.includes('@') || text.includes('.') || text.length > 20) {
+                                            result.bio = text.replace(/\\n/g, ' | ');
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // === EXTERNAL LINKS + WHATSAPP from bio area ===
+                    result.whatsapp_number = 'N/A';
+                    result.external_link = 'N/A';
+                    
+                    const bioArea = document.querySelector('header') || document.querySelector('main');
+                    if (bioArea) {
+                        const bioLinks = bioArea.querySelectorAll('a[href]');
+                        const externalLinks = [];
+                        for (const link of bioLinks) {
+                            const href = link.getAttribute('href') || '';
+                            if (!href || href === '#') continue;
+                            if (href.startsWith('/') || (href.includes('instagram.com') && !href.includes('l.instagram.com'))) continue;
+                            if (href.startsWith('javascript:') || href.startsWith('mailto:')) continue;
+                            
+                            let cleanHref = href;
+                            if (!cleanHref.startsWith('http')) cleanHref = 'https://' + cleanHref;
+                            
+                            if (cleanHref.includes('l.instagram.com/')) {
+                                try {
+                                    const urlObj = new URL(cleanHref);
+                                    const actualUrl = urlObj.searchParams.get('u');
+                                    if (actualUrl) cleanHref = decodeURIComponent(actualUrl);
+                                } catch(e) {}
+                            }
+                            
+                            externalLinks.push(cleanHref);
+                            
+                            if (result.whatsapp_number === 'N/A') {
+                                const waM = cleanHref.match(/wa\\.me\\/(\\+?\\d[\\d\\s.-]+)/);
+                                if (waM) result.whatsapp_number = waM[1].replace(/[^\\d+]/g, '');
+                                const apiM = cleanHref.match(/api\\.whatsapp\\.com\\/send\\??.*phone=(\\+?\\d[\\d.-]+)/);
+                                if (apiM) result.whatsapp_number = apiM[1].replace(/[^\\d+]/g, '');
+                            }
+                        }
+                        if (externalLinks.length > 0) {
+                            result.external_link = externalLinks.join(' | ');
+                        }
+                    }
+                    
+                    // Check bio text for WA numbers if not found in links
+                    if (result.whatsapp_number === 'N/A' && result.bio !== 'N/A') {
+                        const bt = result.bio;
+                        const waM = bt.match(/wa\\.me\\/(\\+?\\d[\\d\\s.-]+)/i);
+                        if (waM) {
+                            result.whatsapp_number = waM[1].replace(/[^\\d+]/g, '');
+                        } else {
+                            const waL = bt.match(/(?:WA|WhatsApp|Whatsapp|wa)[:\\s]*(\\+?\\d[\\d\\s.-]{8,})/i);
+                            if (waL) result.whatsapp_number = waL[1].replace(/[^\\d+]/g, '');
+                        }
+                    }
+                    
+                    return result;
+                }
+            """)
+            return data
         except Exception as e:
-            logger.error(f"Error waiting for posts with selector '{selector}': {e}")
-            return []
-
-    async def close_post(self, page: Page) -> None:
-        try:
-            close_selectors = [
-                'button[aria-label="Close"]',
-                'svg[aria-label="Close"]',
-                'div[role="dialog"] button'
-            ]
-            for selector in close_selectors:
-                try:
-                    close_button = await page.wait_for_selector(selector, timeout=5000)
-                    if close_button and await close_button.is_visible():
-                        await close_button.click()
-                        await self.random_delay()
-                        return
-                except:
-                    continue
-            await page.keyboard.press("Escape")
-            await self.random_delay()
-        except Exception as e:
-            logger.warning(f"Error closing post: {e}")
-
-    async def get_highlights(self, page: Page) -> List[str]:
-        highlights = []
-        try:
-            await page.wait_for_selector('div.xqy66fx', state='visible', timeout=10000)
-            highlight_elements = await page.query_selector_all('div.xqy66fx span.x1lliihq')
-            for element in highlight_elements:
-                if await element.is_visible():
-                    text = await element.inner_text()
-                    highlights.append(text.strip())
-        except Exception as e:
-            logger.warning(f"Error getting highlights: {e}")
-        return highlights[:5]
+            logger.error(f"Error extracting profile data via JS for {username}: {e}")
+            return None
 
     async def search_profiles_by_keyword(self, keyword: str, limit: int = 50) -> List[str]:
-        logger.info(f"Searching for profiles with keyword: {keyword}")
+        """Scrape profiles from a hashtag by navigating through posts."""
+        tag = keyword.strip('#').replace(' ', '')
+        logger.info(f"Scraping hashtag: #{tag}")
         usernames = set()
-        try:
-            # Go to search URL
-            search_url = f"https://www.instagram.com/explore/search/keyword/?q={keyword}"
-            await self.page.goto(search_url, wait_until="networkidle", timeout=60000)
-            await self.random_delay(3, 5)
-
-            # Scroll to load more profiles
-            profiles_found = 0
-            attempts = 0
-            while len(usernames) < limit and attempts < 10:
-                if self.shutdown: break
-                # Find all links that look like profile links
-                # Instagram search result links usually have a specific structure
-                elements = await self.page.query_selector_all('a[href^="/"]')
-                for el in elements:
-                    href = await el.get_attribute("href")
-                    if href:
-                        # Normalize href (remove leading/trailing slashes)
-                        clean_href = href.strip("/")
-                        parts = clean_href.split("/")
-                        
-                        # A profile link should have exactly one part (the username)
-                        if len(parts) == 1:
-                            username = parts[0]
-                            # Exclude common Instagram internal paths
-                            if username not in ["explore", "reels", "direct", "accounts", "legal", "about", "emails", "terms", "privacy", "directory"]:
-                                if username not in usernames:
-                                    usernames.add(username)
-                                    self.callback_log(f"🔍 Ditemukan profil: @{username}")
-                                    if len(usernames) >= limit:
-                                        break
-                
-                if len(usernames) >= limit:
-                    break
-                
-                # Scroll down
-                await self.page.evaluate("window.scrollBy(0, 1000)")
-                await self.random_delay(1, 2)
-                attempts += 1
-
-            logger.info(f"Found {len(usernames)} usernames for keyword: {keyword}")
-        except Exception as e:
-            logger.error(f"Error searching for keyword {keyword}: {e}")
         
+        excluded = ["explore", "reels", "direct", "accounts", "legal", "about", "tags", "emails", "privacy", "help"]
+        
+        try:
+            self.callback_log(f"🏷️ Membuka hashtag: #{tag}...")
+            await self.page.goto(f"https://www.instagram.com/explore/tags/{tag}/", wait_until="domcontentloaded")
+            await self.random_delay(3, 5)
+            
+            # Click the first post to open the modal view (more reliable for username extraction)
+            first_post = await self.page.query_selector('div._ac7w div._aabd')
+            if first_post:
+                self.callback_log("🖼️ Membuka postingan pertama...")
+                await first_post.click()
+                await self.random_delay(2, 3)
+                
+                # Navigate post-by-post
+                for i in range(limit * 2): # Try twice the limit to find enough unique profiles
+                    if len(usernames) >= limit or self.shutdown: break
+                    
+                    # Extract username from current post
+                    user_el = await self.page.query_selector('header a[role="link"], header a.x1i10hfl')
+                    if user_el:
+                        user = await user_el.inner_text()
+                        user = user.strip().lower()
+                        if user and user not in excluded and user not in usernames:
+                            usernames.add(user)
+                            self.callback_log(f"✨ [{len(usernames)}/{limit}] Ditemukan: @{user}")
+                    
+                    # Click 'Next' button
+                    next_button = await self.page.query_selector('svg[aria-label="Next"], svg[aria-label="Selanjutnya"]')
+                    if next_button:
+                        # The button is usually the parent or ancestor
+                        parent_button = await self.page.evaluate_handle('el => el.closest("button") || el.parentElement', next_button)
+                        if parent_button:
+                            await parent_button.click()
+                            await asyncio.sleep(random.uniform(1.5, 2.5))
+                        else:
+                            break
+                    else:
+                        break
+            
+            # Fallback to scrolling if modal view failed or wasn't enough
+            if len(usernames) < limit and not self.shutdown:
+                self.callback_log("📜 Men-scroll halaman hashtag untuk hasil tambahan...")
+                for _ in range(5):
+                    if len(usernames) >= limit or self.shutdown: break
+                    await self.page.evaluate("window.scrollBy(0, 1000)")
+                    await asyncio.sleep(2)
+                    links = await self.page.evaluate("""
+                        () => [...new Set([...document.querySelectorAll('a[href^="/"]')]
+                            .map(a => a.getAttribute('href').split('/')[1])
+                            .filter(u => u && u.length > 3 && !['reels', 'p', 'explore', 'tags'].includes(u)))]
+                    """)
+                    for user in links:
+                        if user not in excluded and user not in usernames:
+                            usernames.add(user.lower())
+                            self.callback_log(f"✨ Ditemukan: @{user}")
+                            if len(usernames) >= limit: break
+
+        except Exception as e:
+            logger.error(f"Error in hashtag scraping: {e}")
+            self.callback_log(f"❌ Error hashtag Instagram: {str(e)}")
+            
         return list(usernames)[:limit]
 
     async def scrape_profile(self, page: Page, profile: str, writer: csv.DictWriter, csv_file: TextIO,
                             existing_usernames: Set[str]) -> Optional[dict]:
-        username = profile.strip('@') if not profile.startswith('http') else profile.split('/')[-2]
+        username = profile.strip('@').strip()
+        if 'instagram.com/' in username:
+            username = username.split('instagram.com/')[-1].split('/')[0].split('?')[0]
+        
         if username in self.progress['processed_profiles']:
             logger.info(f"Skipping already processed profile: {username}")
             return None
@@ -481,148 +731,70 @@ class InstagramScraper:
             return None
 
         logger.info(f"Scraping profile: {username}")
+        self.callback_log(f"   📥 Membuka profil: @{username}")
+        
         if not await self.navigate_to_profile(page, username):
-            self.callback_log(f"Failed to navigate to profile: {username}", "ERROR")
+            self.callback_log(f"   ❌ Gagal membuka profil: @{username}")
             self.progress['processed_profiles'].append(username)
             self.save_progress(username)
             return None
 
         try:
-            await page.wait_for_timeout(5000)
-            header = await page.query_selector('header')
-            if not header:
-                logger.error(f"Profile header not found for {username}")
-                return None
-            private_indicator = await page.query_selector('text="This account is private"')
-            no_posts_indicator = await page.query_selector('text="No Posts Yet"')
-            if private_indicator or no_posts_indicator:
-                logger.info(f"Skipping {username}: {'Private account' if private_indicator else 'No posts'}")
+            # Wait for page to fully render
+            await page.wait_for_timeout(3000)
+            
+            # Extract all data at once using JavaScript
+            self.callback_log(f"   📊 Mengekstrak data profil...")
+            js_data = await self.extract_profile_data_js(page, username)
+            
+            if not js_data:
+                self.callback_log(f"   ⚠️ Tidak bisa membaca data profil @{username}")
                 self.progress['processed_profiles'].append(username)
                 self.save_progress(username)
                 return None
-
-            await page.evaluate("window.scrollBy(0, 1000)")
-            await page.wait_for_timeout(2000)
-
-            name_selectors = [
-                'section.xc3tme8 div.x7a106z span.x1lliihq:not([class*="xdj266r"])',
-                'h1[class*="x1lliihq"]',
-                'span[class*="x1plvlek"]'
-            ]
-            full_name = 'N/A'
-            for selector in name_selectors:
-                name_text = await self.get_text(selector)
-                if name_text != 'N/A' and not re.search(r'^\d+ posts$', name_text.strip()):
-                    full_name = self.normalize_unicode(name_text)
-                    break
-
-            stat_selectors = [
-                ('posts', 'ul.xieb3on li:nth-child(1) span'),
-                ('followers', 'ul.xieb3on li:nth-child(2) span'),
-                ('following', 'ul.xieb3on li:nth-child(3) span')
-            ]
-            stats = {'posts': 0, 'followers': 0, 'following': 0}
-            for key, selector in stat_selectors:
-                try:
-                    text = await self.get_text(selector)
-                    stats[key] = self.normalize_number(text)
-                except Exception as e:
-                    stats[key] = 0
-
-            bio_selectors = [
-                'span._ap3a',
-                'div[class*="x1nhvcw1"] span._ap3a',
-                'span[class*="xdj266r"]'
-            ]
-            bio = 'N/A'
-            more_button_selectors = [
-                'span._ap3a span div[role="button"]:has-text("more")',
-                'div[class*="x1nhvcw1"] span._ap3a span div[role="button"]:has-text("more")',
-                'div[class*="x9f619"] span._ap3a span div[role="button"]:has-text("more")'
-            ]
-            for selector in more_button_selectors:
-                more_button = await page.query_selector(selector)
-                if more_button and await more_button.is_visible():
-                    logger.debug(f"Clicked 'more' for {username} with selector {selector}")
-                    await more_button.click()
-                    await page.wait_for_timeout(2000)
-                    break
-
-            for selector in bio_selectors:
-                bio_text = await self.get_text(selector)
-                if bio_text != 'N/A' and bio_text.strip():
-                    bio = re.sub(r'\s*\|\s*', ' | ', bio_text.replace('\n', ' | ')).strip()
-                    break
-
+            
+            # Check private/no posts
+            if js_data.get('is_private'):
+                self.callback_log(f"   🔒 @{username} adalah akun privat. Melewati...")
+                self.progress['processed_profiles'].append(username)
+                self.save_progress(username)
+                return None
+            
+            if js_data.get('no_posts'):
+                self.callback_log(f"   📭 @{username} belum memiliki postingan. Melewati...")
+                self.progress['processed_profiles'].append(username)
+                self.save_progress(username)
+                return None
+            
+            # Parse the stats
+            full_name = self.normalize_unicode(js_data.get('full_name', 'N/A')) or 'N/A'
+            posts = self.normalize_number(js_data.get('posts_text', '0'))
+            followers = self.normalize_number(js_data.get('followers_text', '0'))
+            following = self.normalize_number(js_data.get('following_text', '0'))
+            bio = js_data.get('bio', 'N/A')
             email = self.extract_email(bio)
-
-            post_data = []
-            post_selectors = [
-                'div.x1lliihq.x1n2onr6.xh8yej3',
-                'a[href*="/p/"]',
-                'a[href*="/reel/"]',
-                'article',
-                'div[class*="x1qjc9v5"]'
-            ]
-            recent_posts = []
-            for selector in post_selectors:
-                posts = await self.wait_for_posts(page, selector=selector, timeout=30000)
-                if posts:
-                    recent_posts = posts[:2]
-                    break
-            if not recent_posts:
-                post_data = [{'likes': 0, 'comments': 0, 'engagement': 0}] * 2
-
-            for i, post in enumerate(recent_posts):
-                if self.shutdown: break
-                try:
-                    for hover_attempt in range(3):
-                        try:
-                            await post.scroll_into_view_if_needed()
-                            await post.hover()
-                            await page.wait_for_timeout(1000)
-                            popup_selector = 'ul.x6s0dn4'
-                            await page.wait_for_selector(popup_selector, state='visible', timeout=5000)
-                            popup = await page.query_selector(popup_selector)
-                            if popup:
-                                likes_element = await popup.query_selector('li:nth-child(1) span.x1lliihq span.html-span')
-                                comments_element = await popup.query_selector('li:nth-child(2) span.x1lliihq span.html-span')
-                                likes = self.normalize_number(await likes_element.inner_text()) if likes_element else 0
-                                comments = self.normalize_number(await comments_element.inner_text()) if comments_element else 0
-                                engagement = likes + comments
-                            else:
-                                likes = 0
-                                comments = 0
-                                engagement = 0
-                            post_data.append({'likes': likes, 'comments': comments, 'engagement': engagement})
-                            await page.wait_for_timeout(500)
-                            break
-                        except Exception as e:
-                            if hover_attempt < 2:
-                                await self.random_delay(1, 2)
-                                continue
-                            post_data.append({'likes': 0, 'comments': 0, 'engagement': 0})
-                            break
-                except Exception as e:
-                    logger.error(f"Error processing post {i + 1} for {username}: {e}")
-                    post_data.append({'likes': 0, 'comments': 0, 'engagement': 0})
-
-            while len(post_data) < 2:
-                post_data.append({'likes': 0, 'comments': 0, 'engagement': 0})
-
-            total_engagement = post_data[0]['engagement'] + post_data[1]['engagement']
+            
+            # WhatsApp extraction (from JS data first, then Python fallback)
+            wa_number = js_data.get('whatsapp_number', 'N/A')
+            external_link = js_data.get('external_link', 'N/A')
+            
+            # Python fallback if JS didn't find WA number
+            if wa_number == 'N/A' and bio != 'N/A':
+                wa_data = self.extract_whatsapp(bio)
+                wa_number = wa_data['number']
+            
+            self.callback_log(f"   👤 {full_name} | 👥 {followers} followers | 📧 {email} | 📱 WA: {wa_number}")
 
             profile_data = {
                 'full_name': full_name,
                 'username': username,
-                'post_count': stats['posts'],
-                'followers': stats['followers'],
-                'following': stats['following'],
+                'post_count': posts,
+                'followers': followers,
+                'following': following,
                 'bio': bio,
                 'email': email,
-                'post_1_engagement': post_data[0]['engagement'],
-                'post_2_engagement': post_data[1]['engagement'],
-                'total_engagement': total_engagement,
+                'whatsapp_number': wa_number,
+                'external_link': external_link,
                 'instagram_link': f"https://www.instagram.com/{username}/"
             }
 
@@ -631,12 +803,15 @@ class InstagramScraper:
             existing_usernames.add(username)
             self.progress['processed_profiles'].append(username)
             self.save_progress(username)
-            self.callback_log(f"Saved profile data for {username}")
+            self.callback_log(f"   ✅ Data @{username} berhasil disimpan.")
             self.callback_result(profile_data)
             return profile_data
 
         except Exception as e:
+            self.callback_log(f"   ⚠️ Error pada @{username}: {str(e)[:80]}")
             logger.error(f"Error scraping profile {username}: {e}")
+            self.progress['processed_profiles'].append(username)
+            self.save_progress(username)
             return None
 
     async def run(self, profiles: Optional[List[str]] = None, keyword: Optional[str] = None, limit: int = 100) -> None:
@@ -676,57 +851,85 @@ class InstagramScraper:
             try:
                 self.setup_shutdown_handler(browser)
                 self.page = await browser.new_page()
-                await self.page.add_init_script("""
-                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                    window.navigator.chrome = { runtime: {} };
-                    Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
-                    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
-                """)
-                await self.page.context.grant_permissions(['geolocation'])
-                await self.page.evaluate("""
-                    () => {
-                        navigator.geolocation.getCurrentPosition = function(success, error, options) {
-                            if (typeof success === 'function') {
-                                success({
-                                    coords: {
-                                        latitude: 48.8566,
-                                        longitude: 2.3522,
-                                        accuracy: 1000
-                                    },
-                                    timestamp: Date.now()
-                                });
-                            }
-                            else if (typeof error === 'function') {
-                                error(new Error('Geolocation success callback is not a function'));
-                            }
-                        };
-                    }
-                """)
+                await self.setup_page_stealth(self.page)
+                
                 logger.info("Navigating to Instagram...")
                 await self.page.goto("https://www.instagram.com/", wait_until="domcontentloaded", timeout=60000)
-                await self.page.wait_for_timeout(5000) # Manual wait for some hydration
+                await self.page.wait_for_timeout(5000) 
                 
-                # Check status before deciding to login
-                if await self.is_logged_in(self.page):
-                    self.callback_log("Session detected, already logged in.")
+                # Check login status
+                is_logged = await self.is_logged_in(self.page)
+                if is_logged:
+                    self.callback_log("✅ Sesi aktif ditemukan, sudah login.")
                 else:
-                    if not await self.handle_login(self.page):
-                        self.callback_log("Login failed. Exiting...", "ERROR")
+                    self.callback_log("⚠️ Sesi tidak ditemukan. Memulai proses login manual...")
+                    
+                    # Jika saat ini headless=True, kita harus tutup dan buka lagi sebagai headful agar user bisa login
+                    if self.headless:
+                        await browser.close()
+                        self.callback_log("🔄 Membuka jendela browser (Headful) agar Anda bisa login...")
+                        browser = await p.chromium.launch_persistent_context(
+                            self.user_data_dir,
+                            headless=False, # Paksa browser tampil
+                            viewport=self.config['viewport'],
+                            locale=self.config.get('locale', 'en-US'),
+                            timezone_id=self.config['timezone_id'],
+                            user_agent=random.choice(self.user_agents),
+                            args=browser_args,
+                            ignore_https_errors=True
+                        )
+                        self.setup_shutdown_handler(browser)
+                        self.page = await browser.new_page()
+                        await self.setup_page_stealth(self.page)
+                    
+                    # Arahkan ke halaman login
+                    await self.page.goto("https://www.instagram.com/accounts/login/")
+                    self.callback_log("⏳ Silakan masukkan Username & Password Anda di jendela browser.")
+                    self.callback_log("Menunggu hingga Anda berhasil masuk ke Dashboard Instagram...")
+                    
+                    # Tunggu manual login (cek status setiap 2 detik)
+                    logged_in = False
+                    for i in range(300): # 10 Menit timeout
+                        if await self.is_logged_in(self.page):
+                            logged_in = True
+                            break
+                        if self.shutdown: break
+                        await asyncio.sleep(2)
+                        
+                        if i % 15 == 0: # Ingatkan user setiap 30 detik
+                            self._log_status_wait = getattr(self, '_log_status_wait', 0) + 1
+                            if self._log_status_wait % 2 == 0:
+                                self.callback_log("⏳ Masih menunggu login manual...")
+                    
+                    if not logged_in:
+                        self.callback_log("❌ Login gagal atau waktu habis. Pastikan Anda sudah masuk ke dashboard.", "ERROR")
                         await browser.close()
                         return
+                    
+                    self.callback_log("✅ Login Berhasil! Sesi telah disimpan.")
+                    self.callback_log("Melanjutkan pencarian profil...")
 
-                csv_filename = self.progress.get('csv_file')
-                if not csv_filename or not os.path.exists(csv_filename):
+                if keyword:
+                    # Reset progress for keyword searches - start fresh
+                    self.progress = {'processed_profiles': [], 'csv_file': None, 'last_processed': None}
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
                     csv_filename = f'instagram_profiles_{timestamp}.csv'
                     self.progress['csv_file'] = csv_filename
                     self.save_progress()
+                    existing_usernames = set()
+                else:
+                    csv_filename = self.progress.get('csv_file')
+                    if not csv_filename or not os.path.exists(csv_filename):
+                        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        csv_filename = f'instagram_profiles_{timestamp}.csv'
+                        self.progress['csv_file'] = csv_filename
+                        self.save_progress()
+                    existing_usernames = self.load_existing_usernames(csv_filename)
 
-                existing_usernames = self.load_existing_usernames(csv_filename)
                 with open(csv_filename, mode='a', newline='', encoding='utf-8') as csv_file:
                     fieldnames = [
                         'full_name', 'username', 'post_count', 'followers', 'following', 'bio', 'email',
-                        'post_1_engagement', 'post_2_engagement', 'total_engagement', 'instagram_link'
+                        'whatsapp_number', 'external_link', 'instagram_link'
                     ]
                     writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
                     if csv_file.tell() == 0:
@@ -742,38 +945,56 @@ class InstagramScraper:
                     total_profiles = len(profiles)
                     self.callback_log(f"Starting scrape for {total_profiles} profiles...")
 
-                    last_processed = self.progress.get('last_processed')
+                    # Reset resume logic for keyword searches to avoid skipping all results
+                    last_processed = self.progress.get('last_processed') if not keyword else None
                     start_processing = False if last_processed else True
                     profile_count = 0
                     skip_count = 0
+                    
+                    self.callback_log(f"🚀 Memulai scraping {total_profiles} profil...")
+                    
                     for profile in profiles:
                         if self.shutdown:
                             logger.info("Shutdown detected, stopping...")
                             break
-                        if await self.check_for_block(self.page):
-                            logger.error("Instagram block detected, stopping...")
-                            break
-                        username = profile.strip('@') if not profile.startswith('http') else profile.split('/')[-2]
-                        if not start_processing and username == last_processed:
-                            start_processing = True
-                            if skip_count > 0:
-                                logger.info(f"Skipped {skip_count} profiles until last processed: {last_processed}")
-                            continue
+                        
+                        # Extract username from URL or handle @username
+                        username = profile.strip('@').strip()
+                        if 'instagram.com/' in username:
+                            username = username.split('instagram.com/')[-1].split('/')[0].split('?')[0]
+                        
                         if not start_processing:
+                            if username == last_processed:
+                                start_processing = True
+                                self.callback_log(f"✅ Melanjutkan dari profil terakhir: @{username}")
+                                continue
                             skip_count += 1
                             continue
+
                         if username in self.progress['processed_profiles']:
-                            logger.info(f"Skipping already processed profile: {username}")
+                            self.callback_log(f"⏭️ @{username} sudah pernah diproses. Melewati...")
                             continue
+                        
                         if username in existing_usernames:
-                            logger.info(f"Skipping duplicate username: {username}")
+                            self.callback_log(f"⏭️ @{username} sudah ada di CSV. Melewati...")
                             continue
-                        await self.scrape_profile(self.page, profile, writer, csv_file, existing_usernames)
-                        profile_count += 1
-                        self.callback_progress(profile_count, total_profiles)
-                        if profile_count % 10 == 0:  # Save every 10 profiles
+
+                        # Progress update
+                        current_idx = profile_count + 1
+                        self.callback_log(f"🔍 [{current_idx}/{total_profiles}] Mengambil data: @{username}")
+                        
+                        res = await self.scrape_profile(self.page, profile, writer, csv_file, existing_usernames)
+                        if res:
+                            profile_count += 1
+                            self.callback_progress(profile_count, total_profiles)
+                            
+                        # Save progress every 5 profiles
+                        if profile_count > 0 and profile_count % 5 == 0:
                             self.save_progress(username)
+                        
+                        # Random delay to avoid detection
                         await self.random_delay(5, 10)
+
                     if skip_count > 0 and not start_processing:  # Handle case where last_processed is last profile
                         logger.info(f"Skipped {skip_count} profiles until last processed: {last_processed}")
                     self.save_progress(username)  # Final save
