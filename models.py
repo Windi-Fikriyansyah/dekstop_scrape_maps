@@ -28,13 +28,23 @@ class User(Base):
 class Lead(Base):
     __tablename__ = "leads"
     id = Column(Integer, primary_key=True, index=True)
-    google_place_id = Column(String, unique=True, index=True)
-    name = Column(String)
-    address = Column(String, nullable=True)
+    google_place_id = Column(String, unique=True, index=True, nullable=True)
+    source = Column(String, default="google_maps") # google_maps, social_media, social_email
+    
+    # Common fields
+    name = Column(String, nullable=True)
     phone = Column(String, nullable=True)
+    keyword = Column(String, nullable=True)
+    
+    # Google Maps specific
+    address = Column(String, nullable=True)
     website = Column(String, nullable=True)
     rating = Column(Float, nullable=True)
     category = Column(String, nullable=True)
+    
+    # Social Media/Email specific
+    platform = Column(String, nullable=True)
+    email = Column(String, nullable=True)
     
     # Relationships
     searches = relationship("Search", secondary=search_leads, back_populates="leads")

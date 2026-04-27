@@ -56,15 +56,22 @@ except ImportError:
 import customtkinter as ctk
 import pandas as pd
 from playwright.sync_api import sync_playwright
-try:
-    from instagram_engine import InstagramScraper
-except ImportError:
-    InstagramScraper = None
+
 
 try:
     from staffspy import LinkedInAccount
 except ImportError:
     LinkedInAccount = None
+
+try:
+    from social_engine import SocialEngine
+except ImportError:
+    SocialEngine = None
+
+try:
+    from email_social_engine import EmailSocialEngine
+except ImportError:
+    EmailSocialEngine = None
 
 def check_playwright_browser():
     """Checks if chromium is installed for playwright."""
@@ -78,7 +85,7 @@ def check_playwright_browser():
 # ─── Constants ────────────────────────────────────────────────────────────────
 BASE_DIR = Path(__file__).resolve().parent
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
-EXCLUDED_DOMAINS = ["google.com", "facebook.com", "instagram.com"]
+EXCLUDED_DOMAINS = ["google.com", "facebook.com"]
 
 # ─── Color Palette ────────────────────────────────────────────────────────────
 COLORS = {
@@ -887,21 +894,27 @@ class ModernApp(ctk.CTk):
         self.tab_scraper = self.tabview.add("Scraper ✨")
         self.tab_saved = self.tabview.add("Data Tersimpan 📁")
         self.tab_broadcast = self.tabview.add("Broadcast 💬")
-        self.tab_instagram = self.tabview.add("Instagram (Incoming) 📸")
+
         self.tab_linkedin = self.tabview.add("LinkedIn ✨")
+        self.tab_social = self.tabview.add("Social Media 🌐")
+        self.tab_social_email = self.tabview.add("Social Email 📧")
 
         self.broadcast_contacts = []
         self.bc_engine = None
         self.bc_image_path = None # Store attached image path
-        self.current_ig_results = []
-        self.ig_scraper_instance = None
         self.current_li_results = []
+        self.current_social_results = []
+        self.social_engine_instance = None
+        self.current_social_email_results = []
+        self.social_email_engine_instance = None
 
         self._setup_scraper_tab()
         self._setup_saved_tab()
         self._setup_broadcast_tab()
-        self._setup_instagram_tab()
+
         self._setup_linkedin_tab()
+        self._setup_social_tab()
+        self._setup_social_email_tab()
         self._setup_styles()
         
         # Check for browser on a separate thread to not freeze UI immediately
@@ -1047,6 +1060,16 @@ class ModernApp(ctk.CTk):
         top_bar.pack(fill="x", padx=10, pady=5)
 
         ctk.CTkLabel(top_bar, text="Data Tersimpan", font=("Segoe UI Semibold", 16)).pack(side="left")
+
+        self.var_saved_filter = tk.StringVar(value="Google Maps")
+        self.filter_saved = ctk.CTkOptionMenu(
+            top_bar, 
+            variable=self.var_saved_filter, 
+            values=["Google Maps", "Social Media", "Social Email"],
+            command=self._on_saved_filter_change,
+            width=140
+        )
+        self.filter_saved.pack(side="left", padx=15)
 
         # Tombol aksi Data Tersimpan
         self.btn_select_all = ctk.CTkButton(top_bar, text="Pilih Semua", width=100, command=self._select_all_saved)
@@ -1202,204 +1225,6 @@ class ModernApp(ctk.CTk):
         tree_container.grid_rowconfigure(0, weight=1)
         tree_container.grid_columnconfigure(0, weight=1)
 
-    # ═══════════════════════════════════════════════════════════════════════
-    #  TAB 4: INSTAGRAM
-    # ═══════════════════════════════════════════════════════════════════════
-    def _setup_instagram_tab(self):
-        sidebar = ctk.CTkScrollableFrame(self.tab_instagram, width=300, fg_color=COLORS["bg_card"], corner_radius=15, scrollbar_fg_color="transparent")
-        sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
-
-        inner = ctk.CTkFrame(sidebar, fg_color="transparent")
-        inner.pack(fill="both", expand=True, padx=5, pady=5)
-
-        ctk.CTkLabel(inner, text="PENGATURAN INSTAGRAM", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,5))
-        
-        # Badge Incoming
-        badge_frame = ctk.CTkFrame(inner, fg_color=COLORS["warning"], corner_radius=5)
-        badge_frame.pack(fill="x", pady=(0, 15))
-        ctk.CTkLabel(badge_frame, text="STILL IN DEVELOPMENT (INCOMING)", font=("Segoe UI Bold", 10), text_color="black").pack(pady=2)
-
-        self.entry_ig_user = self._add_field(inner, "👤 Username", "Instagram Username")
-        self.entry_ig_pass = self._add_field(inner, "🔑 Password", "Instagram Password")
-        
-        # Load from .env if exists
-        try:
-            from dotenv import load_dotenv
-            load_dotenv()
-            if os.getenv('INSTAGRAM_USERNAME'):
-                self.entry_ig_user.insert(0, os.getenv('INSTAGRAM_USERNAME'))
-            if os.getenv('INSTAGRAM_PASSWORD'):
-                self.entry_ig_pass.insert(0, os.getenv('INSTAGRAM_PASSWORD'))
-        except: pass
-        
-        # Headless Toggle (Set default to False so browser is visible)
-        self.var_ig_headless = tk.BooleanVar(value=False)
-        self.cb_ig_headless = ctk.CTkCheckBox(inner, text="Mode Headless (Tanpa Jendela)", variable=self.var_ig_headless, font=("Segoe UI", 11))
-        self.cb_ig_headless.pack(anchor="w", pady=(0, 10))
-
-        self.entry_ig_keyword = self._add_field(inner, "🔍 Keyword Pencarian", "Contoh: Jasa Desain")
-        self.entry_ig_limit = self._add_field(inner, "📊 Batas Data", "20")
-
-        self.btn_ig_start = ctk.CTkButton(inner, text="Mulai Scrape Instagram 🚀", fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self._start_ig_scraping, height=45, font=("Segoe UI Bold", 13))
-        self.btn_ig_start.pack(fill="x", pady=(15, 5))
-
-        self.btn_ig_stop = ctk.CTkButton(inner, text="Stop", fg_color=COLORS["danger"], state="disabled", command=self._stop_ig_scraping)
-        self.btn_ig_stop.pack(fill="x", pady=5)
-
-        self.ig_progress = ctk.CTkProgressBar(inner, fg_color=COLORS["bg_input"], progress_color=COLORS["success"])
-        self.ig_progress.set(0)
-        self.ig_progress.pack(fill="x", pady=15)
-
-        self.ig_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
-        self.ig_log_box.pack(fill="x")
-
-        main_area = ctk.CTkFrame(self.tab_instagram, fg_color=COLORS["bg_card"], corner_radius=15)
-        main_area.pack(side="right", fill="both", expand=True)
-        
-        # Table Header
-        header = ctk.CTkFrame(main_area, fg_color="transparent")
-        header.pack(fill="x", padx=10, pady=10)
-        ctk.CTkLabel(header, text="Hasil Scrape Instagram", font=("Segoe UI Semibold", 14)).pack(side="left")
-        ctk.CTkButton(header, text="Export CSV", fg_color=COLORS["success"], width=100, command=self._export_ig_to_csv).pack(side="right", padx=5)
-
-        # Treeview
-        tree_container = ctk.CTkFrame(main_area, fg_color="transparent")
-        tree_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-
-        cols = ("no", "full_name", "username", "followers", "following", "posts", "email", "whatsapp", "bio", "ext_link", "link")
-        self.tree_ig = ttk.Treeview(tree_container, columns=cols, show="headings", style="Custom.Treeview")
-        
-        headings = {
-            "no": "No", "full_name": "Nama Lengkap", "username": "Username", 
-            "followers": "Followers", "following": "Following", "posts": "Posts",
-            "email": "Email", "whatsapp": "No. WhatsApp", "bio": "Bio",
-            "ext_link": "Link Eksternal", "link": "Link IG"
-        }
-        widths = {
-            "no": 40, "full_name": 130, "username": 110, 
-            "followers": 70, "following": 70, "posts": 50,
-            "email": 140, "whatsapp": 120, "bio": 200,
-            "ext_link": 180, "link": 140
-        }
-
-        for c, h in headings.items():
-            self.tree_ig.heading(c, text=h)
-            self.tree_ig.column(c, width=widths.get(c, 100))
-
-        ysb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree_ig.yview)
-        self.tree_ig.configure(yscroll=ysb.set)
-        
-        self.tree_ig.tag_configure("odd", background=COLORS["table_row_1"])
-        self.tree_ig.tag_configure("even", background=COLORS["table_row_2"])
-
-        self.tree_ig.grid(row=0, column=0, sticky="nsew")
-        ysb.grid(row=0, column=1, sticky="ns")
-        tree_container.grid_rowconfigure(0, weight=1)
-        tree_container.grid_columnconfigure(0, weight=1)
-
-    def _ig_log(self, msg):
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.ig_log_box.insert("end", f"[{timestamp}] {msg}\n")
-        self.ig_log_box.see("end")
-
-    def _start_ig_scraping(self):
-        user = self.entry_ig_user.get().strip()
-        pw = self.entry_ig_pass.get().strip()
-        kw = self.entry_ig_keyword.get().strip()
-        try: limit = int(self.entry_ig_limit.get() or 20)
-        except: limit = 20
-        
-        if not kw:
-            messagebox.showwarning("Peringatan", "Masukkan keyword untuk pencarian.")
-            return
-        
-        self.btn_ig_start.configure(state="disabled", text="Scraping...")
-        self.btn_ig_stop.configure(state="normal")
-        self.ig_progress.set(0)
-        # Clear table
-        for item in self.tree_ig.get_children():
-            self.tree_ig.delete(item)
-        self.current_ig_results = []
-        
-        self.ig_scraper_instance = None
-        
-        def run_async_scraper():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            
-            # Update config with headless preference
-            import json
-            if os.path.exists('config.json'):
-                try:
-                    with open('config.json', 'r') as f: config = json.load(f)
-                except: config = {}
-            else: config = {}
-            config['headless'] = self.var_ig_headless.get()
-            
-            self.ig_scraper_instance = InstagramScraper(
-                username=user,
-                password=pw,
-                callback_log=lambda m, level="INFO": self.after(0, lambda: self._ig_log(f"{m}")),
-                callback_result=lambda r: self.after(0, lambda: self._on_ig_result(r)),
-                callback_progress=lambda c, t: self.after(0, lambda: self.ig_progress.set(c/t)),
-                headless=False  # Always headful - needed for manual login & CAPTCHA
-            )
-            
-            try:
-                loop.run_until_complete(self.ig_scraper_instance.run(keyword=kw, limit=limit))
-            except Exception as e:
-                self.after(0, lambda: self._ig_log(f"Error: {str(e)}"))
-            finally:
-                loop.close()
-                self.after(0, self._on_ig_done)
-
-        threading.Thread(target=run_async_scraper, daemon=True).start()
-
-    def _on_ig_result(self, res):
-        idx = len(self.current_ig_results) + 1
-        self.current_ig_results.append(res)
-        tag = "even" if idx % 2 == 0 else "odd"
-        
-        # Truncate bio for table display
-        bio_short = res.get("bio", "")
-        if bio_short and len(bio_short) > 50:
-            bio_short = bio_short[:50] + "..."
-        
-        self.tree_ig.insert("", "end", values=(
-            idx,
-            res.get("full_name", ""),
-            res.get("username", ""),
-            res.get("followers", 0),
-            res.get("following", 0),
-            res.get("post_count", 0),
-            res.get("email", ""),
-            res.get("whatsapp_number", ""),
-            bio_short,
-            res.get("external_link", ""),
-            res.get("instagram_link", "")
-        ), tags=(tag,))
-
-    def _on_ig_done(self):
-        self.btn_ig_start.configure(state="normal", text="Mulai Scrape Instagram 🚀")
-        self.btn_ig_stop.configure(state="disabled")
-        self._ig_log("✅ Scraping Instagram Selesai!")
-        messagebox.showinfo("Selesai", "Scraping Instagram telah selesai.")
-
-    def _stop_ig_scraping(self):
-        if hasattr(self, 'ig_scraper_instance') and self.ig_scraper_instance:
-            self._ig_log("🛑 Berhenti... (Sedang menutup browser)")
-            self.ig_scraper_instance.shutdown = True
-
-    def _export_ig_to_csv(self):
-        if not hasattr(self, 'current_ig_results') or not self.current_ig_results:
-            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
-            return
-        
-        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
-        if path:
-            df = pd.DataFrame(self.current_ig_results)
-            df.to_csv(path, index=False)
-            messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
 
     # ═══════════════════════════════════════════════════════════════════════
     #  TAB 5: LINKEDIN
@@ -1687,6 +1512,32 @@ class ModernApp(ctk.CTk):
         entry.pack(fill="x", pady=(0, 10))
         return entry
 
+    def _update_tree_columns(self, tree, headings, widths):
+        tree["columns"] = list(headings.keys())
+        for c in tree["columns"]:
+            tree.heading(c, text="") # clear
+        for c, h in headings.items():
+            tree.heading(c, text=h)
+            tree.column(c, width=widths.get(c, 100), anchor="center" if c in ["select", "no", "rating"] else "w")
+
+    def _on_saved_filter_change(self, choice):
+        if choice == "Google Maps":
+            self._update_tree_columns(self.tree_saved, 
+                {"select": "Pilih", "no": "No", "nama": "Nama Bisnis", "kategori": "Kategori", "alamat": "Alamat", "telepon": "Telepon", "email": "Email", "website": "Website", "rating": "⭐"},
+                {"select": 40, "no": 30, "nama": 150, "kategori": 100, "alamat": 250, "telepon": 100, "email": 120, "website": 120, "rating": 40}
+            )
+        elif choice == "Social Media":
+            self._update_tree_columns(self.tree_saved, 
+                {"select": "Pilih", "no": "No", "platform": "Platform", "telepon": "Nomor HP", "keyword": "Keyword"},
+                {"select": 40, "no": 30, "platform": 100, "telepon": 150, "keyword": 150}
+            )
+        else: # Social Email
+            self._update_tree_columns(self.tree_saved, 
+                {"select": "Pilih", "no": "No", "platform": "Platform", "email": "Email", "keyword": "Keyword"},
+                {"select": 40, "no": 30, "platform": 100, "email": 250, "keyword": 150}
+            )
+        self._load_saved_data()
+
     def _create_tree(self, parent, checkbox=False):
         container = ctk.CTkFrame(parent, fg_color="transparent")
         container.pack(fill="both", expand=True, padx=10, pady=10)
@@ -1861,12 +1712,27 @@ class ModernApp(ctk.CTk):
     def _load_saved_data(self):
         for item in self.tree_saved.get_children(): self.tree_saved.delete(item)
         db = SessionLocal()
+        filter_choice = self.var_saved_filter.get()
+        
+        source_map = {
+            "Google Maps": "google_maps",
+            "Social Media": "social_media",
+            "Social Email": "social_email"
+        }
+        target_source = source_map.get(filter_choice, "google_maps")
+        
         try:
-            leads = db.query(models.Lead).order_by(models.Lead.id.desc()).all()
+            leads = db.query(models.Lead).filter(models.Lead.source == target_source).order_by(models.Lead.id.desc()).all()
             for i, l in enumerate(leads):
                 tag = "even" if i % 2 == 0 else "odd"
-                # Simpan l.id di atribut 'iid' tabel, ini kunci utama untuk hapus data nanti
-                self.tree_saved.insert("", "end", iid=str(l.id), values=("☐", i+1, l.name, l.category, l.address, l.phone, "", l.website, l.rating), tags=(tag,))
+                if target_source == "google_maps":
+                    vals = ("☐", i+1, l.name, l.category, l.address, l.phone, "", l.website, l.rating)
+                elif target_source == "social_media":
+                    vals = ("☐", i+1, l.platform, l.phone, l.keyword)
+                else: # social_email
+                    vals = ("☐", i+1, l.platform, l.email, l.keyword)
+                    
+                self.tree_saved.insert("", "end", iid=str(l.id), values=vals, tags=(tag,))
         finally:
             db.close()
             
@@ -1914,13 +1780,23 @@ class ModernApp(ctk.CTk):
         if not path: return
         
         db = SessionLocal()
+        filter_choice = self.var_saved_filter.get()
+        source_map = {"Google Maps": "google_maps", "Social Media": "social_media", "Social Email": "social_email"}
+        target_source = source_map.get(filter_choice, "google_maps")
+        
         try:
-            leads = db.query(models.Lead).all()
+            leads = db.query(models.Lead).filter(models.Lead.source == target_source).all()
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)
-                w.writerow(["ID", "Nama", "Kategori", "Alamat", "Telepon", "Website", "Rating"])
-                for l in leads:
-                    w.writerow([l.id, l.name, l.category, l.address, l.phone, l.website, l.rating])
+                if target_source == "google_maps":
+                    w.writerow(["ID", "Nama", "Kategori", "Alamat", "Telepon", "Website", "Rating"])
+                    for l in leads: w.writerow([l.id, l.name, l.category, l.address, l.phone, l.website, l.rating])
+                elif target_source == "social_media":
+                    w.writerow(["ID", "Platform", "Nomor HP", "Keyword"])
+                    for l in leads: w.writerow([l.id, l.platform, l.phone, l.keyword])
+                else:
+                    w.writerow(["ID", "Platform", "Email", "Keyword"])
+                    for l in leads: w.writerow([l.id, l.platform, l.email, l.keyword])
             messagebox.showinfo("Export Berhasil", f"Data diexport ke {path}")
         finally:
             db.close()
@@ -1929,19 +1805,20 @@ class ModernApp(ctk.CTk):
         if not path: return
         
         db = SessionLocal()
+        filter_choice = self.var_saved_filter.get()
+        source_map = {"Google Maps": "google_maps", "Social Media": "social_media", "Social Email": "social_email"}
+        target_source = source_map.get(filter_choice, "google_maps")
+        
         try:
-            leads = db.query(models.Lead).all()
+            leads = db.query(models.Lead).filter(models.Lead.source == target_source).all()
             data = []
             for l in leads:
-                data.append({
-                    "ID": l.id,
-                    "Nama": l.name,
-                    "Kategori": l.category,
-                    "Alamat": l.address,
-                    "Telepon": l.phone,
-                    "Website": l.website,
-                    "Rating": l.rating
-                })
+                if target_source == "google_maps":
+                    data.append({"ID": l.id, "Nama": l.name, "Kategori": l.category, "Alamat": l.address, "Telepon": l.phone, "Website": l.website, "Rating": l.rating})
+                elif target_source == "social_media":
+                    data.append({"ID": l.id, "Platform": l.platform, "Nomor HP": l.phone, "Keyword": l.keyword})
+                else:
+                    data.append({"ID": l.id, "Platform": l.platform, "Email": l.email, "Keyword": l.keyword})
             
             df = pd.DataFrame(data)
             df.to_excel(path, index=False)
@@ -2123,6 +2000,413 @@ class ModernApp(ctk.CTk):
             args=(self.broadcast_contacts, msg, d_min, d_max, b_every, b_dur, self.bc_image_path, self.entry_bc_duplicate.get().strip(), country_code), 
             daemon=True
         ).start()
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  TAB 6: SOCIAL MEDIA (FB & IG)
+    # ═══════════════════════════════════════════════════════════════════════
+    def _setup_social_tab(self):
+        sidebar = ctk.CTkScrollableFrame(self.tab_social, width=300, fg_color=COLORS["bg_card"], corner_radius=15, scrollbar_fg_color="transparent")
+        sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
+
+        inner = ctk.CTkFrame(sidebar, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(inner, text="PENGATURAN SOCIAL MEDIA", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,15))
+
+        ctk.CTkLabel(inner, text="Platform", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
+        self.var_social_platform = tk.StringVar(value="Facebook")
+        self.opt_social_platform = ctk.CTkOptionMenu(inner, variable=self.var_social_platform, values=["Facebook", "Instagram", "LinkedIn"])
+        self.opt_social_platform.pack(fill="x", pady=(0, 15))
+
+        self.entry_social_keyword = self._add_field(inner, "🔍 Keyword", "Contoh: jual gamis")
+        
+        ctk.CTkLabel(inner, text="Pilih Negara", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
+        self.combo_social_country = ctk.CTkComboBox(
+            inner, 
+            values=[f"{n} (+{c})" for n, c in COUNTRY_DATA], 
+            fg_color=COLORS["bg_input"], 
+            text_color="white", 
+            border_color=COLORS["border"]
+        )
+        self.combo_social_country.set("Indonesia (+62)")
+        self.combo_social_country.pack(fill="x", pady=(0, 15))
+
+        self.entry_social_limit = self._add_field(inner, "📊 Batas Halaman", "5")
+
+        self.btn_social_start = ctk.CTkButton(inner, text="Mulai Scrape Social Media 🚀", fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self._start_social_scraping, height=45, font=("Segoe UI Bold", 13))
+        self.btn_social_start.pack(fill="x", pady=(15, 5))
+
+        self.btn_social_stop = ctk.CTkButton(inner, text="Stop", fg_color=COLORS["danger"], state="disabled", command=self._stop_social_scraping)
+        self.btn_social_stop.pack(fill="x", pady=5)
+
+        self.btn_save_social_db = ctk.CTkButton(inner, text="Simpan ke Database", fg_color=COLORS["success"], state="disabled", command=self._save_social_to_db)
+        self.btn_save_social_db.pack(fill="x", pady=5)
+
+        self.social_progress = ctk.CTkProgressBar(inner, fg_color=COLORS["bg_input"], progress_color=COLORS["success"])
+        self.social_progress.set(0)
+        self.social_progress.pack(fill="x", pady=15)
+
+        self.social_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.social_log_box.pack(fill="x")
+
+        main_area = ctk.CTkFrame(self.tab_social, fg_color=COLORS["bg_card"], corner_radius=15)
+        main_area.pack(side="right", fill="both", expand=True)
+        
+        # Table Header
+        header = ctk.CTkFrame(main_area, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(header, text="Hasil Scrape Kontak Social Media", font=("Segoe UI Semibold", 14)).pack(side="left")
+        ctk.CTkButton(header, text="Export CSV", fg_color=COLORS["success"], width=100, command=self._export_social_data).pack(side="right", padx=5)
+        ctk.CTkButton(header, text="Export Excel", fg_color="#107c41", width=100, command=self._export_social_to_excel).pack(side="right", padx=5)
+
+        # Treeview
+        tree_container = ctk.CTkFrame(main_area, fg_color="transparent")
+        tree_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        cols = ("no", "platform", "phone", "keyword")
+        self.tree_social = ttk.Treeview(tree_container, columns=cols, show="headings", style="Custom.Treeview")
+        
+        headings = {"no": "No", "platform": "Platform", "phone": "Nomor HP", "keyword": "Keyword"}
+        widths = {"no": 40, "platform": 100, "phone": 150, "keyword": 150}
+
+        for c, h in headings.items():
+            self.tree_social.heading(c, text=h)
+            self.tree_social.column(c, width=widths.get(c, 100))
+
+        ysb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree_social.yview)
+        self.tree_social.configure(yscroll=ysb.set)
+        
+        self.tree_social.tag_configure("odd", background=COLORS["table_row_1"])
+        self.tree_social.tag_configure("even", background=COLORS["table_row_2"])
+
+        self.tree_social.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        tree_container.grid_rowconfigure(0, weight=1)
+        tree_container.grid_columnconfigure(0, weight=1)
+
+    def _social_log(self, msg):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.social_log_box.insert("end", f"[{timestamp}] {msg}\n")
+        self.social_log_box.see("end")
+
+    def _start_social_scraping(self):
+        platform = self.var_social_platform.get()
+        kw = self.entry_social_keyword.get().strip()
+        try: limit = int(self.entry_social_limit.get() or 5)
+        except: limit = 5
+        
+        # Get country code
+        selected_country = self.combo_social_country.get()
+        match = re.search(r'\+(\d+)', selected_country)
+        country_code = match.group(1) if match else "62"
+
+        if not kw:
+            messagebox.showwarning("Peringatan", "Masukkan keyword pencarian.")
+            return
+
+        self.btn_social_start.configure(state="disabled", text="Scraping...")
+        self.btn_social_stop.configure(state="normal")
+        self.social_progress.set(0)
+        
+        for item in self.tree_social.get_children():
+            self.tree_social.delete(item)
+        self.current_social_results = []
+        
+        self.social_engine_instance = SocialEngine(
+            callback_log=lambda m: self.after(0, lambda: self._social_log(m)),
+            callback_result=lambda r: self.after(0, lambda: self._on_social_result(r)),
+            callback_progress=lambda c, t: self.after(0, lambda: self.social_progress.set(c/t)),
+            callback_done=lambda: self.after(0, self._on_social_done)
+        )
+        
+        def run_social():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.social_engine_instance.run(
+                platform=platform,
+                keyword=kw,
+                country_code=country_code,
+                limit_pages=limit,
+                headless=False
+            ))
+            loop.close()
+
+        threading.Thread(target=run_social, daemon=True).start()
+
+    def _on_social_result(self, res):
+        idx = len(self.current_social_results) + 1
+        self.current_social_results.append(res)
+        tag = "even" if idx % 2 == 0 else "odd"
+        self.tree_social.insert("", "end", values=(
+            idx,
+            res.get("Platform", ""),
+            res.get("Phone Number", ""),
+            res.get("Keyword", "")
+        ), tags=(tag,))
+
+    def _on_social_done(self):
+        self.btn_social_start.configure(state="normal", text="Mulai Scrape Social Media 🚀")
+        self.btn_social_stop.configure(state="disabled")
+        if self.current_social_results:
+            self.btn_save_social_db.configure(state="normal")
+        self._social_log("✅ Scraping Social Media Selesai!")
+        messagebox.showinfo("Selesai", "Scraping Social Media telah selesai.")
+
+    def _save_social_to_db(self):
+        if not self.current_social_results: return
+        
+        session = SessionLocal()
+        try:
+            count = 0
+            for res in self.current_social_results:
+                # Check duplicate by phone and platform
+                exists = session.query(models.Lead).filter(
+                    models.Lead.phone == res.get("Phone Number"),
+                    models.Lead.platform == res.get("Platform"),
+                    models.Lead.source == "social_media"
+                ).first()
+                
+                if not exists:
+                    lead = models.Lead(
+                        source="social_media",
+                        platform=res.get("Platform"),
+                        phone=res.get("Phone Number"),
+                        keyword=res.get("Keyword")
+                    )
+                    session.add(lead)
+                    count += 1
+            session.commit()
+            messagebox.showinfo("Sukses", f"Berhasil menyimpan {count} data baru ke database.")
+            self.btn_save_social_db.configure(state="disabled")
+        except Exception as e:
+            session.rollback()
+            messagebox.showerror("Error", f"Gagal menyimpan: {str(e)}")
+        finally:
+            session.close()
+
+    def _stop_social_scraping(self):
+        if self.social_engine_instance:
+            self.social_engine_instance.shutdown = True
+            self._social_log("🛑 Memberhentikan...")
+
+    def _export_social_data(self):
+        if not self.current_social_results:
+            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        if path:
+            pd.DataFrame(self.current_social_results).to_csv(path, index=False)
+            messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+
+    def _export_social_to_excel(self):
+        if not self.current_social_results:
+            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+        if path:
+            try:
+                pd.DataFrame(self.current_social_results).to_excel(path, index=False)
+                messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Gagal menyimpan file Excel: {str(e)}")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    #  TAB 7: SOCIAL EMAIL (FB, IG, LI)
+    # ═══════════════════════════════════════════════════════════════════════
+    def _setup_social_email_tab(self):
+        sidebar = ctk.CTkScrollableFrame(self.tab_social_email, width=300, fg_color=COLORS["bg_card"], corner_radius=15, scrollbar_fg_color="transparent")
+        sidebar.pack(side="left", fill="y", padx=(0, 10), pady=0)
+
+        inner = ctk.CTkFrame(sidebar, fg_color="transparent")
+        inner.pack(fill="both", expand=True, padx=5, pady=5)
+
+        ctk.CTkLabel(inner, text="PENGATURAN SOCIAL EMAIL", font=("Segoe UI Semibold", 14), text_color=COLORS["text_primary"]).pack(pady=(0,15))
+
+        ctk.CTkLabel(inner, text="Platform", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
+        self.var_social_email_platform = tk.StringVar(value="Facebook")
+        self.opt_social_email_platform = ctk.CTkOptionMenu(inner, variable=self.var_social_email_platform, values=["Facebook", "Instagram", "LinkedIn"])
+        self.opt_social_email_platform.pack(fill="x", pady=(0, 15))
+
+        self.entry_social_email_keyword = self._add_field(inner, "🔍 Keyword", "Contoh: owner cafe")
+        
+        ctk.CTkLabel(inner, text="Provider Email", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
+        self.var_social_email_provider = tk.StringVar(value="Semua")
+        self.opt_social_email_provider = ctk.CTkOptionMenu(inner, variable=self.var_social_email_provider, values=["Semua", "@gmail.com", "@yahoo.com", "@outlook.com", "@hotmail.com"])
+        self.opt_social_email_provider.pack(fill="x", pady=(0, 15))
+
+        self.entry_social_email_limit = self._add_field(inner, "📊 Batas Halaman", "5")
+
+        self.btn_social_email_start = ctk.CTkButton(inner, text="Mulai Scrape Email Social 🚀", fg_color=COLORS["accent"], hover_color=COLORS["accent_hover"], command=self._start_social_email_scraping, height=45, font=("Segoe UI Bold", 13))
+        self.btn_social_email_start.pack(fill="x", pady=(15, 5))
+
+        self.btn_social_email_stop = ctk.CTkButton(inner, text="Stop", fg_color=COLORS["danger"], state="disabled", command=self._stop_social_email_scraping)
+        self.btn_social_email_stop.pack(fill="x", pady=5)
+
+        self.btn_save_social_email_db = ctk.CTkButton(inner, text="Simpan ke Database", fg_color=COLORS["success"], state="disabled", command=self._save_social_email_to_db)
+        self.btn_save_social_email_db.pack(fill="x", pady=5)
+
+        self.social_email_progress = ctk.CTkProgressBar(inner, fg_color=COLORS["bg_input"], progress_color=COLORS["success"])
+        self.social_email_progress.set(0)
+        self.social_email_progress.pack(fill="x", pady=15)
+
+        self.social_email_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.social_email_log_box.pack(fill="x")
+
+        main_area = ctk.CTkFrame(self.tab_social_email, fg_color=COLORS["bg_card"], corner_radius=15)
+        main_area.pack(side="right", fill="both", expand=True)
+        
+        header = ctk.CTkFrame(main_area, fg_color="transparent")
+        header.pack(fill="x", padx=10, pady=10)
+        ctk.CTkLabel(header, text="Hasil Scrape Email Social Media", font=("Segoe UI Semibold", 14)).pack(side="left")
+        ctk.CTkButton(header, text="Export CSV", fg_color=COLORS["success"], width=100, command=self._export_social_email_data).pack(side="right", padx=5)
+        ctk.CTkButton(header, text="Export Excel", fg_color="#107c41", width=100, command=self._export_social_email_to_excel).pack(side="right", padx=5)
+
+        tree_container = ctk.CTkFrame(main_area, fg_color="transparent")
+        tree_container.pack(fill="both", expand=True, padx=10, pady=(0, 10))
+
+        cols = ("no", "platform", "email", "keyword")
+        self.tree_social_email = ttk.Treeview(tree_container, columns=cols, show="headings", style="Custom.Treeview")
+        
+        headings = {"no": "No", "platform": "Platform", "email": "Email", "keyword": "Keyword"}
+        widths = {"no": 40, "platform": 100, "email": 250, "keyword": 150}
+
+        for c, h in headings.items():
+            self.tree_social_email.heading(c, text=h)
+            self.tree_social_email.column(c, width=widths.get(c, 100))
+
+        ysb = ttk.Scrollbar(tree_container, orient="vertical", command=self.tree_social_email.yview)
+        self.tree_social_email.configure(yscroll=ysb.set)
+        
+        self.tree_social_email.tag_configure("odd", background=COLORS["table_row_1"])
+        self.tree_social_email.tag_configure("even", background=COLORS["table_row_2"])
+
+        self.tree_social_email.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        tree_container.grid_rowconfigure(0, weight=1)
+        tree_container.grid_columnconfigure(0, weight=1)
+
+    def _social_email_log(self, msg):
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.social_email_log_box.insert("end", f"[{timestamp}] {msg}\n")
+        self.social_email_log_box.see("end")
+
+    def _start_social_email_scraping(self):
+        platform = self.var_social_email_platform.get()
+        kw = self.entry_social_email_keyword.get().strip()
+        provider = self.var_social_email_provider.get()
+        try: limit = int(self.entry_social_email_limit.get() or 5)
+        except: limit = 5
+        
+        if not kw:
+            messagebox.showwarning("Peringatan", "Masukkan keyword pencarian.")
+            return
+
+        self.btn_social_email_start.configure(state="disabled", text="Scraping...")
+        self.btn_social_email_stop.configure(state="normal")
+        self.social_email_progress.set(0)
+        
+        for item in self.tree_social_email.get_children():
+            self.tree_social_email.delete(item)
+        self.current_social_email_results = []
+        
+        self.social_email_engine_instance = EmailSocialEngine(
+            callback_log=lambda m: self.after(0, lambda: self._social_email_log(m)),
+            callback_result=lambda r: self.after(0, lambda: self._on_social_email_result(r)),
+            callback_progress=lambda c, t: self.after(0, lambda: self.social_email_progress.set(c/t)),
+            callback_done=lambda: self.after(0, self._on_social_email_done)
+        )
+        
+        def run_social_email():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.social_email_engine_instance.run(
+                platform=platform,
+                keyword=kw,
+                email_provider=provider,
+                limit_pages=limit,
+                headless=False
+            ))
+            loop.close()
+
+        threading.Thread(target=run_social_email, daemon=True).start()
+
+    def _on_social_email_result(self, res):
+        idx = len(self.current_social_email_results) + 1
+        self.current_social_email_results.append(res)
+        tag = "even" if idx % 2 == 0 else "odd"
+        self.tree_social_email.insert("", "end", values=(
+            idx,
+            res.get("Platform", ""),
+            res.get("Email", ""),
+            res.get("Keyword", "")
+        ), tags=(tag,))
+
+    def _on_social_email_done(self):
+        self.btn_social_email_start.configure(state="normal", text="Mulai Scrape Email Social 🚀")
+        self.btn_social_email_stop.configure(state="disabled")
+        if self.current_social_email_results:
+            self.btn_save_social_email_db.configure(state="normal")
+        self._social_email_log("✅ Scraping Email Social Media Selesai!")
+        messagebox.showinfo("Selesai", "Scraping Email Social Media telah selesai.")
+
+    def _save_social_email_to_db(self):
+        if not self.current_social_email_results: return
+        
+        session = SessionLocal()
+        try:
+            count = 0
+            for res in self.current_social_email_results:
+                # Check duplicate by email and platform
+                exists = session.query(models.Lead).filter(
+                    models.Lead.email == res.get("Email"),
+                    models.Lead.platform == res.get("Platform"),
+                    models.Lead.source == "social_email"
+                ).first()
+                
+                if not exists:
+                    lead = models.Lead(
+                        source="social_email",
+                        platform=res.get("Platform"),
+                        email=res.get("Email"),
+                        keyword=res.get("Keyword")
+                    )
+                    session.add(lead)
+                    count += 1
+            session.commit()
+            messagebox.showinfo("Sukses", f"Berhasil menyimpan {count} data baru ke database.")
+            self.btn_save_social_email_db.configure(state="disabled")
+        except Exception as e:
+            session.rollback()
+            messagebox.showerror("Error", f"Gagal menyimpan: {str(e)}")
+        finally:
+            session.close()
+
+    def _stop_social_email_scraping(self):
+        if self.social_email_engine_instance:
+            self.social_email_engine_instance.shutdown = True
+            self._social_email_log("🛑 Memberhentikan...")
+
+    def _export_social_email_data(self):
+        if not self.current_social_email_results:
+            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+        if path:
+            pd.DataFrame(self.current_social_email_results).to_csv(path, index=False)
+            messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+
+    def _export_social_email_to_excel(self):
+        if not self.current_social_email_results:
+            messagebox.showwarning("Peringatan", "Tidak ada data untuk diexport.")
+            return
+        path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+        if path:
+            try:
+                pd.DataFrame(self.current_social_email_results).to_excel(path, index=False)
+                messagebox.showinfo("Sukses", f"Data berhasil disimpan ke {path}")
+            except Exception as e:
+                messagebox.showerror("Error", f"Gagal menyimpan file Excel: {str(e)}")
+
 
 if __name__ == "__main__":
     # Penting untuk aplikasi Windows yang di-package dengan PyInstaller/EXE

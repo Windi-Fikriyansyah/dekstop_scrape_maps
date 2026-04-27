@@ -11,10 +11,10 @@ if getattr(sys, 'frozen', False):
     # If bundled, store data in User's AppData to avoid permission issues in Program Files
     app_data = Path(os.environ.get("LOCALAPPDATA", os.path.expanduser("~"))) / "WAMaps"
     app_data.mkdir(parents=True, exist_ok=True)
-    db_path = app_data / "sql_app.db"
+    db_path = app_data / "sql_app_v2.db"
 else:
     # If running as script, keep it local
-    db_path = Path("./sql_app.db").resolve()
+    db_path = Path("./sql_app_v2.db").resolve()
 
 SQLALCHEMY_DATABASE_URL = f"sqlite:///{db_path}"
 
