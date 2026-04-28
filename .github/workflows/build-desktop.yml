@@ -11,7 +11,7 @@ on:
 
 jobs:
   build-macos:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -19,6 +19,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+          architecture: 'x64'
           cache: 'pip'
 
       - name: Install dependencies
