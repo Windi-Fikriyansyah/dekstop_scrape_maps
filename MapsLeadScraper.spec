@@ -27,8 +27,7 @@ datas += [
     ('social_engine.py', '.'),
     ('email_social_engine.py', '.'),
     ('database.py', '.'),
-    ('models.py', '.'),
-    ('config.json', '.')
+    ('models.py', '.')
 ]
 
 a = Analysis(
