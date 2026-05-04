@@ -936,14 +936,23 @@ class ModernApp(ctk.CTk):
                 
                 # Cari lokasi driver playwright yang dibundel
                 driver_path = Path(playwright.__file__).parent / "driver"
-                node_exe = driver_path / "node.exe"
+                # Pada macOS/Linux nama executable-nya adalah 'node', bukan 'node.exe'
+                node_name = "node.exe" if os.name == "nt" else "node"
+                node_exe = driver_path / node_name
                 cli_js = driver_path / "package" / "cli.js"
                 
                 if getattr(sys, 'frozen', False) and node_exe.exists() and cli_js.exists():
                     self._log(f"📍 Menggunakan driver bundled: {node_exe.name}")
                     cmd = [str(node_exe), str(cli_js), "install", "chromium"]
                 else:
-                    cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+                    # Fallback jika tidak frozen atau driver bundled tidak ditemukan
+                    if getattr(sys, 'frozen', False):
+                        # Jika frozen (EXE/APP) tapi node bundled tidak ditemukan, 
+                        # sys.executable adalah binary app itu sendiri yang tidak mendukung flag '-m'.
+                        # Kita coba gunakan 'python3' sistem sebagai harapan terakhir.
+                        cmd = ["python3", "-m", "playwright", "install", "chromium"]
+                    else:
+                        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
 
                 self._log(f"🚀 Memproses instalasi browser...")
                 
@@ -1681,6 +1690,7 @@ class ModernApp(ctk.CTk):
                     exists.category = r["Kategori"]
                     exists.address = r["Alamat"]
                     exists.phone = r["Telepon"]
+                    exists.email = r["Email"]
                     exists.website = r["Website"]
                     exists.rating = new_rating
                     exists.google_place_id = url
@@ -1693,6 +1703,7 @@ class ModernApp(ctk.CTk):
                         category=r["Kategori"],
                         address=r["Alamat"],
                         phone=r["Telepon"],
+                        email=r["Email"],
                         website=r["Website"],
                         rating=new_rating,
                         google_place_id=url 
@@ -1726,7 +1737,7 @@ class ModernApp(ctk.CTk):
             for i, l in enumerate(leads):
                 tag = "even" if i % 2 == 0 else "odd"
                 if target_source == "google_maps":
-                    vals = ("☐", i+1, l.name, l.category, l.address, l.phone, "", l.website, l.rating)
+                    vals = ("☐", i+1, l.name, l.category, l.address, l.phone, l.email or "", l.website, l.rating)
                 elif target_source == "social_media":
                     vals = ("☐", i+1, l.platform, l.phone, l.keyword)
                 else: # social_email
@@ -1789,8 +1800,8 @@ class ModernApp(ctk.CTk):
             with open(path, "w", newline="", encoding="utf-8-sig") as f:
                 w = csv.writer(f)
                 if target_source == "google_maps":
-                    w.writerow(["ID", "Nama", "Kategori", "Alamat", "Telepon", "Website", "Rating"])
-                    for l in leads: w.writerow([l.id, l.name, l.category, l.address, l.phone, l.website, l.rating])
+                    w.writerow(["ID", "Nama", "Kategori", "Alamat", "Telepon", "Email", "Website", "Rating"])
+                    for l in leads: w.writerow([l.id, l.name, l.category, l.address, l.phone, l.email, l.website, l.rating])
                 elif target_source == "social_media":
                     w.writerow(["ID", "Platform", "Nomor HP", "Keyword"])
                     for l in leads: w.writerow([l.id, l.platform, l.phone, l.keyword])
@@ -1814,7 +1825,7 @@ class ModernApp(ctk.CTk):
             data = []
             for l in leads:
                 if target_source == "google_maps":
-                    data.append({"ID": l.id, "Nama": l.name, "Kategori": l.category, "Alamat": l.address, "Telepon": l.phone, "Website": l.website, "Rating": l.rating})
+                    data.append({"ID": l.id, "Nama": l.name, "Kategori": l.category, "Alamat": l.address, "Telepon": l.phone, "Email": l.email, "Website": l.website, "Rating": l.rating})
                 elif target_source == "social_media":
                     data.append({"ID": l.id, "Platform": l.platform, "Nomor HP": l.phone, "Keyword": l.keyword})
                 else:

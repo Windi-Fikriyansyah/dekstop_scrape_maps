@@ -21,6 +21,16 @@ if sys.platform == 'darwin':
 else:
     datas += [('pw-browsers', 'pw-browsers')]
 
+# Include local modules and config files
+datas += [
+    ('staffspy', 'staffspy'),
+    ('social_engine.py', '.'),
+    ('email_social_engine.py', '.'),
+    ('database.py', '.'),
+    ('models.py', '.'),
+    ('config.json', '.')
+]
+
 a = Analysis(
     ['desktop_app.py'],
     pathex=[],
