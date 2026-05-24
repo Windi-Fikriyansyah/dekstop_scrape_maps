@@ -306,9 +306,11 @@ class ScraperEngine:
     def _name_formatter(name_raw):
         try:
             if not name_raw: return "Pelanggan"
-            # Ambil kata pertama, bersihkan underscore, lowercase lalu Title Case
-            name = str(name_raw).split()[0]
-            return name.replace("_", " ").lower().title()
+            name_str = str(name_raw).strip()
+            if not name_str or name_str.lower() == 'nan': return "Pelanggan"
+            # Bersihkan underscore menjadi spasi
+            name_clean = name_str.replace("_", " ")
+            return name_clean.title()
         except:
             return name_raw
 
@@ -327,8 +329,11 @@ class BroadcastEngine:
     def _name_formatter(name_raw):
         try:
             if not name_raw: return "Pelanggan"
-            name = str(name_raw).split()[0]
-            return name.replace("_", " ").lower().title()
+            name_str = str(name_raw).strip()
+            if not name_str or name_str.lower() == 'nan': return "Pelanggan"
+            # Bersihkan underscore menjadi spasi
+            name_clean = name_str.replace("_", " ")
+            return name_clean.title()
         except:
             return name_raw
 
@@ -455,7 +460,19 @@ class BroadcastEngine:
                         if not self.is_running: break
 
                     name = self._name_formatter(contact.get('name', 'Pelanggan'))
-                    final_msg = message_template.replace("{nama}", name)
+                    name_full = str(contact.get('name', 'Pelanggan')).strip()
+                    if not name_full or name_full.lower() == 'nan':
+                        name_full = 'Pelanggan'
+                    else:
+                        name_full = name_full.replace("_", " ")
+                    
+                    final_msg = message_template
+                    # Replace first name placeholders (case-insensitive)
+                    for placeholder in ["{nama}", "{Nama}", "{NAMA}", "{name}", "{Name}", "{NAME}"]:
+                        final_msg = final_msg.replace(placeholder, name)
+                    # Replace full name placeholders (case-insensitive)
+                    for placeholder in ["{nama_lengkap}", "{Nama_Lengkap}", "{NAMA_LENGKAP}", "{nama lengkap}", "{Nama Lengkap}", "{NAMA LENGKAP}", "{full_name}", "{Full_Name}", "{FULL_NAME}", "{fullname}", "{Fullname}", "{FULLNAME}"]:
+                        final_msg = final_msg.replace(placeholder, name_full)
                     
                     try:
                         self.callback_log(f"📨 [{idx+1}/{total}] Mengirim ke {phone} ({name})...")
