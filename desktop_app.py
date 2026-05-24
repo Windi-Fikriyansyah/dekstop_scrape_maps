@@ -54,6 +54,8 @@ except ImportError:
     print("Database components not fully accessible. Ensure SQLAlchemy is installed.")
 
 import customtkinter as ctk
+# Paksa CustomTkinter ke mode terang (light)
+ctk.set_appearance_mode("light")
 import pandas as pd
 from playwright.sync_api import sync_playwright
 
@@ -89,22 +91,22 @@ EXCLUDED_DOMAINS = ["google.com", "facebook.com"]
 
 # ─── Color Palette ────────────────────────────────────────────────────────────
 COLORS = {
-    "bg_dark":      "#0f0f1a",
-    "bg_card":      "#1a1a2e",
-    "bg_input":     "#16213e",
-    "accent":       "#6c63ff",
-    "accent_hover": "#5a52d5",
-    "accent_light": "#8b83ff",
-    "success":      "#00c896",
-    "warning":      "#ffb84d",
-    "danger":       "#ff6b6b",
-    "text_primary": "#e8e8f0",
-    "text_secondary":"#8888a8",
-    "text_muted":   "#555577",
-    "border":       "#2a2a4a",
-    "table_row_1":  "#1a1a2e",
-    "table_row_2":  "#141428",
-    "table_header": "#252545",
+    "bg_light":     "#f5f7fb",   # Latar umum aplikasi
+    "bg_card":      "#ffffff",   # Kartu / panel
+    "bg_input":     "#f0f4f8",   # Field input
+    "accent":       "#2d6cdf",   # Biru aksen
+    "accent_hover": "#2458b8",
+    "accent_light": "#6ea8ff",
+    "success":      "#28a745",
+    "warning":      "#f0ad4e",
+    "danger":       "#dc3545",
+    "text_primary": "#0f1724",
+    "text_secondary":"#4b5563",
+    "text_muted":   "#6b7280",
+    "border":       "#e5e7eb",
+    "table_row_1":  "#ffffff",
+    "table_row_2":  "#f8fafc",
+    "table_header": "#f1f5f9",
 }
 
 # --- Country Codes Data ---
@@ -702,7 +704,7 @@ class LoginWindow(ctk.CTk):
         super().__init__()
         self.title("WAMaps - Login")
         self.geometry("400x600")
-        self.configure(fg_color=COLORS["bg_dark"])
+        self.configure(fg_color=COLORS["bg_light"])
         self.resizable(True, True)
         
         # Center the window
@@ -878,26 +880,74 @@ class ModernApp(ctk.CTk):
         super().__init__()
 
         # ─── Window Setup ─────────────────────────────────────────────────
-        self.title("WAMaps")
+        self.title("WAMaps - Admin Dashboard")
         # Start with a more minimalist size
         self.geometry("1000x650")
         self.minsize(800, 550)
-        self.configure(fg_color=COLORS["bg_dark"])
+        self.configure(fg_color=COLORS["bg_light"]) 
 
         self.engine = None
         self.current_results = []
+        self.current_page = None  # Track active page
+        self.page_frames = {}  # Store page frames
 
         # ─── Layout ───────────────────────────────────────────────────────
-        self.tabview = ctk.CTkTabview(self, fg_color=COLORS["bg_dark"], segmented_button_selected_color=COLORS["accent"])
-        self.tabview.pack(fill="both", expand=True, padx=10, pady=10)
+        # Header (Admin dashboard style)
+        header_bar = ctk.CTkFrame(self, fg_color=COLORS["bg_card"], height=64)
+        header_bar.pack(fill="x", padx=10, pady=(10, 6))
+        header_bar.pack_propagate(False)
+        ctk.CTkLabel(header_bar, text="Admin Dashboard", font=("Segoe UI Bold", 18), text_color=COLORS["text_primary"]).pack(side="left", padx=12)
+        ctk.CTkLabel(header_bar, text="👤 Admin", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(side="right", padx=12)
 
-        self.tab_scraper = self.tabview.add("Scraper ✨")
-        self.tab_saved = self.tabview.add("Data Tersimpan 📁")
-        self.tab_broadcast = self.tabview.add("Broadcast 💬")
+        # Main container (sidebar + content)
+        main_container = ctk.CTkFrame(self, fg_color=COLORS["bg_light"])
+        main_container.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.tab_linkedin = self.tabview.add("LinkedIn ✨")
-        self.tab_social = self.tabview.add("Social Media 🌐")
-        self.tab_social_email = self.tabview.add("Social Email 📧")
+        # ─── SIDEBAR (Left Navigation Menu) ───────────────────────────────
+        self.sidebar = ctk.CTkFrame(main_container, width=220, fg_color=COLORS["bg_card"], corner_radius=15)
+        self.sidebar.pack(side="left", fill="y", padx=(0, 10))
+        self.sidebar.pack_propagate(False)
+
+        sidebar_inner = ctk.CTkScrollableFrame(self.sidebar, fg_color="transparent", scrollbar_fg_color=COLORS["border"])
+        sidebar_inner.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Sidebar menu items
+        self.menu_items = {
+            "scraper": ("🔍 Scraper", "scraper"),
+            "saved": ("📁 Data Tersimpan", "saved"),
+            "broadcast": ("💬 Broadcast", "broadcast"),
+            "linkedin": ("💼 LinkedIn", "linkedin"),
+            "social": ("🌐 Social Media (WA)", "social"),
+            "social_email": ("📧 Social Media (Email)", "social_email"),
+        }
+
+        self.menu_buttons = {}
+        for key, (label, page_id) in self.menu_items.items():
+            btn = ctk.CTkButton(
+                sidebar_inner, 
+                text=label, 
+                fg_color=COLORS["bg_input"], 
+                hover_color=COLORS["accent"],
+                text_color=COLORS["text_primary"],
+                command=lambda p=page_id: self._switch_page(p),
+                height=45,
+                font=("Segoe UI", 11),
+                corner_radius=10
+            )
+            btn.pack(fill="x", pady=5)
+            self.menu_buttons[page_id] = btn
+
+        # ─── CONTENT AREA (Right main content) ─────────────────────────────
+        self.content_area = ctk.CTkFrame(main_container, fg_color=COLORS["bg_light"], corner_radius=15)
+        self.content_area.pack(side="right", fill="both", expand=True)
+
+        # Create page frames (hidden by default)
+        self.tab_scraper = self._create_page("scraper")
+        self.tab_saved = self._create_page("saved")
+        self.tab_broadcast = self._create_page("broadcast")
+        self.tab_linkedin = self._create_page("linkedin")
+        self.tab_social = self._create_page("social")
+        self.tab_social_email = self._create_page("social_email")
 
         self.broadcast_contacts = []
         self.bc_engine = None
@@ -916,6 +966,9 @@ class ModernApp(ctk.CTk):
         self._setup_social_tab()
         self._setup_social_email_tab()
         self._setup_styles()
+
+        # Switch to first page (Scraper)
+        self._switch_page("scraper")
         
         # Check for browser on a separate thread to not freeze UI immediately
         threading.Thread(target=self._initialize_system, daemon=True).start()
@@ -989,6 +1042,32 @@ class ModernApp(ctk.CTk):
             
         self.after(500, lambda: self.btn_start.configure(state="normal", text="Mulai Scraping"))
 
+    def _create_page(self, page_id):
+        """Buat frame untuk setiap halaman (page)."""
+        page_frame = ctk.CTkFrame(self.content_area, fg_color=COLORS["bg_light"], corner_radius=15)
+        page_frame.pack(fill="both", expand=True)
+        page_frame.pack_forget()  # Hide by default
+        self.page_frames[page_id] = page_frame
+        return page_frame
+
+    def _switch_page(self, page_id):
+        """Switch halaman aktif dan update tombol sidebar."""
+        # Hide semua halaman
+        for frame in self.page_frames.values():
+            frame.pack_forget()
+        
+        # Show halaman yang dipilih
+        if page_id in self.page_frames:
+            self.page_frames[page_id].pack(fill="both", expand=True)
+            self.current_page = page_id
+        
+        # Update button styling (highlight tombol aktif)
+        for btn_id, btn in self.menu_buttons.items():
+            if btn_id == page_id:
+                btn.configure(fg_color=COLORS["accent"], text_color="white")
+            else:
+                btn.configure(fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
+
     def _setup_styles(self):
         style = ttk.Style()
         style.theme_use("clam")
@@ -1052,7 +1131,7 @@ class ModernApp(ctk.CTk):
         self.progress_bar.set(0)
         self.progress_bar.pack(fill="x", pady=15)
 
-        self.log_text = ctk.CTkTextbox(inner, height=120, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.log_text = ctk.CTkTextbox(inner, height=120, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.log_text.pack(fill="x")
 
         # Main table area
@@ -1121,7 +1200,7 @@ class ModernApp(ctk.CTk):
 
         # Input Pesan
         ctk.CTkLabel(inner, text="Pesan (Gunakan {nama} untuk variabel)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
-        self.txt_bc_message = ctk.CTkTextbox(inner, height=130, fg_color=COLORS["bg_input"], text_color="white", border_color=COLORS["border"], border_width=1)
+        self.txt_bc_message = ctk.CTkTextbox(inner, height=130, fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"], border_color=COLORS["border"], border_width=1)
         self.txt_bc_message.pack(fill="x", pady=(0, 15))
         self.txt_bc_message.insert("1.0", "Halo {nama},\n\nKami mendapatkan kontak Anda dari Google Maps. Apakah Anda tertarik dengan layanan kami?\n\nSalam.")
 
@@ -1133,11 +1212,11 @@ class ModernApp(ctk.CTk):
         d_label = ctk.CTkLabel(safety_frame, text="⏳ Jeda Acak (detik)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
         d_label.grid(row=0, column=0, columnspan=2, sticky="w")
         
-        self.entry_delay_min = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Min", fg_color=COLORS["bg_input"], text_color="white")
+        self.entry_delay_min = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Min", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.entry_delay_min.insert(0, "10")
         self.entry_delay_min.grid(row=1, column=0, sticky="w", pady=(0, 10), padx=(0, 5))
         
-        self.entry_delay_max = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Max", fg_color=COLORS["bg_input"], text_color="white")
+        self.entry_delay_max = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Max", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.entry_delay_max.insert(0, "30")
         self.entry_delay_max.grid(row=1, column=1, sticky="w", pady=(0, 10))
 
@@ -1145,11 +1224,11 @@ class ModernApp(ctk.CTk):
         b_label = ctk.CTkLabel(safety_frame, text="☕ Istirahat (Pesan / Menit)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
         b_label.grid(row=2, column=0, columnspan=2, sticky="w")
         
-        self.entry_break_every = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Tiap X", fg_color=COLORS["bg_input"], text_color="white")
+        self.entry_break_every = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Tiap X", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.entry_break_every.insert(0, "50")
         self.entry_break_every.grid(row=3, column=0, sticky="w", pady=(0, 10), padx=(0, 5))
         
-        self.entry_break_duration = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Lama", fg_color=COLORS["bg_input"], text_color="white")
+        self.entry_break_duration = ctk.CTkEntry(safety_frame, width=60, placeholder_text="Lama", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.entry_break_duration.insert(0, "15")
         self.entry_break_duration.grid(row=3, column=1, sticky="w", pady=(0, 10))
 
@@ -1157,14 +1236,14 @@ class ModernApp(ctk.CTk):
         ctk.CTkLabel(inner, text="FITUR LANJUTAN", font=("Segoe UI Semibold", 12), text_color=COLORS["accent_light"]).pack(anchor="w", pady=(10, 5))
         
         # Attachment Button
-        self.btn_attach = ctk.CTkButton(inner, text="📸 Lampirkan Gambar (Opsional)", fg_color=COLORS["bg_input"], text_color="white", border_width=1, border_color=COLORS["border"], command=self._pick_bc_image)
+        self.btn_attach = ctk.CTkButton(inner, text="📸 Lampirkan Gambar (Opsional)", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"], border_width=1, border_color=COLORS["border"], command=self._pick_bc_image)
         self.btn_attach.pack(fill="x", pady=5)
         self.label_image_status = ctk.CTkLabel(inner, text="Tidak ada gambar terpilih", font=("Segoe UI", 10), text_color=COLORS["text_secondary"])
         self.label_image_status.pack(anchor="w", pady=(0, 10))
 
         # Duplicate Check String
         ctk.CTkLabel(inner, text="🔍 Hindari Duplikat (Cari kata di chat)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
-        self.entry_bc_duplicate = ctk.CTkEntry(inner, placeholder_text="Contoh: Kami mendapatkan kontak", fg_color=COLORS["bg_input"], text_color="white")
+        self.entry_bc_duplicate = ctk.CTkEntry(inner, placeholder_text="Contoh: Kami mendapatkan kontak", fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.entry_bc_duplicate.pack(fill="x", pady=(0, 15))
 
         # International Settings
@@ -1177,11 +1256,11 @@ class ModernApp(ctk.CTk):
             inner, 
             values=self.country_options, 
             fg_color=COLORS["bg_input"], 
-            text_color="white", 
+            text_color=COLORS["text_primary"], 
             border_color=COLORS["border"],
             dropdown_fg_color=COLORS["bg_card"],
             dropdown_hover_color=COLORS["accent"],
-            dropdown_text_color="white",
+            dropdown_text_color=COLORS["text_primary"],
             button_color=COLORS["accent"],
             height=35
         )
@@ -1198,7 +1277,7 @@ class ModernApp(ctk.CTk):
         self.bc_progress.set(0)
         self.bc_progress.pack(fill="x", pady=15)
 
-        self.bc_log = ctk.CTkTextbox(inner, height=120, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.bc_log = ctk.CTkTextbox(inner, height=120, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.bc_log.pack(fill="x")
 
         # Main Table
@@ -1258,17 +1337,17 @@ class ModernApp(ctk.CTk):
 
         self.lbl_li_target = ctk.CTkLabel(inner, text="🏢 Target Pencarian", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
         self.lbl_li_target.pack(anchor="w")
-        self.entry_li_target = ctk.CTkEntry(inner, placeholder_text="Contoh: tokopedia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_target = ctk.CTkEntry(inner, placeholder_text="Contoh: tokopedia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color=COLORS["text_primary"])
         self.entry_li_target.pack(fill="x", pady=(0, 10))
 
         self.lbl_li_keyword = ctk.CTkLabel(inner, text="🔍 Role / Posisi (Khusus Staff)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
         self.lbl_li_keyword.pack(anchor="w")
-        self.entry_li_keyword = ctk.CTkEntry(inner, placeholder_text="Contoh: software engineer", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_keyword = ctk.CTkEntry(inner, placeholder_text="Contoh: software engineer", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color=COLORS["text_primary"])
         self.entry_li_keyword.pack(fill="x", pady=(0, 10))
 
         self.lbl_li_location = ctk.CTkLabel(inner, text="📍 Lokasi (Khusus Staff)", font=("Segoe UI", 11), text_color=COLORS["text_secondary"])
         self.lbl_li_location.pack(anchor="w")
-        self.entry_li_location = ctk.CTkEntry(inner, placeholder_text="Contoh: indonesia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        self.entry_li_location = ctk.CTkEntry(inner, placeholder_text="Contoh: indonesia", fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color=COLORS["text_primary"])
         self.entry_li_location.pack(fill="x", pady=(0, 10))
 
         self.entry_li_limit = self._add_field(inner, "📊 Batas Data", "20")
@@ -1287,7 +1366,7 @@ class ModernApp(ctk.CTk):
         self.li_progress.set(0)
         self.li_progress.pack(fill="x", pady=15)
 
-        self.li_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.li_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.li_log_box.pack(fill="x")
 
         main_area = ctk.CTkFrame(self.tab_linkedin, fg_color=COLORS["bg_card"], corner_radius=15)
@@ -1517,7 +1596,7 @@ class ModernApp(ctk.CTk):
     # ═══════════════════════════════════════════════════════════════════════
     def _add_field(self, parent, label, placeholder):
         ctk.CTkLabel(parent, text=label, font=("Segoe UI", 11), text_color=COLORS["text_secondary"]).pack(anchor="w")
-        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color="white")
+        entry = ctk.CTkEntry(parent, placeholder_text=placeholder, fg_color=COLORS["bg_input"], border_color=COLORS["border"], text_color=COLORS["text_primary"])
         entry.pack(fill="x", pady=(0, 10))
         return entry
 
@@ -2036,7 +2115,7 @@ class ModernApp(ctk.CTk):
             inner, 
             values=[f"{n} (+{c})" for n, c in COUNTRY_DATA], 
             fg_color=COLORS["bg_input"], 
-            text_color="white", 
+            text_color=COLORS["text_primary"], 
             border_color=COLORS["border"]
         )
         self.combo_social_country.set("Indonesia (+62)")
@@ -2057,7 +2136,7 @@ class ModernApp(ctk.CTk):
         self.social_progress.set(0)
         self.social_progress.pack(fill="x", pady=15)
 
-        self.social_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.social_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.social_log_box.pack(fill="x")
 
         main_area = ctk.CTkFrame(self.tab_social, fg_color=COLORS["bg_card"], corner_radius=15)
@@ -2260,7 +2339,7 @@ class ModernApp(ctk.CTk):
         self.social_email_progress.set(0)
         self.social_email_progress.pack(fill="x", pady=15)
 
-        self.social_email_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color="white")
+        self.social_email_log_box = ctk.CTkTextbox(inner, height=150, font=("Consolas", 10), fg_color=COLORS["bg_input"], text_color=COLORS["text_primary"])
         self.social_email_log_box.pack(fill="x")
 
         main_area = ctk.CTkFrame(self.tab_social_email, fg_color=COLORS["bg_card"], corner_radius=15)
