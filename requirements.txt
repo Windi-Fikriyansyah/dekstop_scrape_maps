@@ -1,4 +1,4 @@
-customtkinter>=5.0
+customtkinter>=5.2.2
 playwright>=1.40.0
 sqlalchemy>=2.0.50
 pandas>=2.0.0
