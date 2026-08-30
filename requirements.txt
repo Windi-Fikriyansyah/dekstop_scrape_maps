@@ -16,4 +16,4 @@ pyotp>=2.10.0
 protobuf>=7.36.0
 pytz>=2026.3.post1
 lxml>=6.1.2
-click>=8.4.2
+click>=8.5.0
